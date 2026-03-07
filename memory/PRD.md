@@ -51,7 +51,7 @@ App mobile per gestire il piano di allenamento per la Mezza Maratona di Fuerteve
 - **Backend**: FastAPI (Python) su porta 8001
 - **Database**: MongoDB
 - **AI**: Claude Sonnet 4 via emergentintegrations (Emergent LLM Key)
-- **Strava**: API v3 integrata (profilo connesso, attività richiedono scope activity:read)
+- **Strava**: API v3 integrata con OAuth completo (profilo connesso, token refresh automatico, code exchange per activity:read_all)
 - **Design**: Dark mode sportivo (stile Garmin avanzato), lime #BEF264 su nero #09090B
 
 ## API Endpoints
