@@ -599,6 +599,189 @@ async def get_exercises_list():
     exercises = await db.exercises.find({}, {"_id": 0}).to_list(50)
     return {"exercises": exercises}
 
+@api_router.post("/runs/cleanup")
+async def cleanup_duplicate_runs():
+    """Remove all runs without strava_id (seed duplicates)"""
+    result = await db.runs.delete_many({"strava_id": {"$exists": False}})
+    result2 = await db.runs.delete_many({"strava_id": None})
+    total = result.deleted_count + result2.deleted_count
+    remaining = await db.runs.count_documents({})
+    return {"deleted": total, "remaining": remaining}
+
+@api_router.get("/analytics")
+async def get_analytics():
+    """Comprehensive analytics: VO2max, race predictions, pace/HR trends, zone distribution, goal gap"""
+    import math
+    runs = await db.runs.find({}, {"_id": 0}).sort("date", 1).to_list(2000)
+    profile = await db.profile.find_one({}, {"_id": 0})
+    max_hr = profile.get("max_hr", 179) if profile else 179
+
+    # Filter valid runs
+    valid_runs = [r for r in runs if r.get("distance_km", 0) > 0.5 and r.get("avg_pace")]
+
+    # ---- PACE TO SECONDS HELPER ----
+    def pace_str_to_secs(p):
+        parts = p.split(":")
+        return int(parts[0]) * 60 + int(parts[1]) if len(parts) == 2 else 999
+
+    # ---- VO2MAX ESTIMATION (Jack Daniels) ----
+    # Find best efforts at different distances
+    best_efforts = {}
+    for r in valid_runs:
+        dist = r.get("distance_km", 0)
+        pace_secs = pace_str_to_secs(r.get("avg_pace", "9:99"))
+        time_secs = r.get("duration_minutes", 0) * 60
+
+        for target_dist in [4, 5, 6, 10, 15, 21.1]:
+            if abs(dist - target_dist) < 0.5:
+                key = f"{target_dist}km"
+                if key not in best_efforts or pace_secs < pace_str_to_secs(best_efforts[key]["avg_pace"]):
+                    best_efforts[key] = r
+
+    # VO2max from best 10km or best effort using Daniels formula
+    vo2max = None
+    best_race = None
+    for key in ["10km", "6km", "5km", "15km", "4km"]:
+        if key in best_efforts:
+            best_race = best_efforts[key]
+            break
+
+    if best_race:
+        dist_m = best_race["distance_km"] * 1000
+        time_min = best_race["duration_minutes"]
+        if time_min > 0:
+            velocity = dist_m / time_min  # m/min
+            # Daniels VO2 formula
+            pct_vo2 = 0.8 + 0.1894393 * math.exp(-0.012778 * time_min) + 0.2989558 * math.exp(-0.1932605 * time_min)
+            vo2 = -4.60 + 0.182258 * velocity + 0.000104 * velocity * velocity
+            if pct_vo2 > 0:
+                vo2max = round(vo2 / pct_vo2, 1)
+
+    # ---- RACE PREDICTIONS (Riegel formula) ----
+    race_predictions = {}
+    ref_run = best_efforts.get("10km") or best_efforts.get("6km") or best_efforts.get("5km") or best_efforts.get("4km")
+    if ref_run:
+        ref_dist = ref_run["distance_km"]
+        ref_time_min = ref_run["duration_minutes"]
+        for target_name, target_km in [("5km", 5), ("10km", 10), ("21.1km", 21.1)]:
+            pred_time = ref_time_min * (target_km / ref_dist) ** 1.06
+            pred_pace_s = (pred_time * 60) / target_km
+            pred_pace = f"{int(pred_pace_s // 60)}:{int(pred_pace_s % 60):02d}"
+            race_predictions[target_name] = {
+                "predicted_time_min": round(pred_time, 1),
+                "predicted_time_str": f"{int(pred_time // 60)}:{int(pred_time % 60):02d}:{int((pred_time % 1) * 60):02d}",
+                "predicted_pace": pred_pace,
+            }
+
+    # Target half marathon: 4:30/km = 94:55
+    target_hm_time = 95.0
+    current_hm_pred = race_predictions.get("21.1km", {}).get("predicted_time_min", 999)
+    goal_gap_min = round(current_hm_pred - target_hm_time, 1)
+    goal_progress_pct = min(100, max(0, round((target_hm_time / max(current_hm_pred, 1)) * 100)))
+
+    # ---- MONTHLY PACE TREND ----
+    monthly_data = {}
+    for r in valid_runs:
+        month_key = r["date"][:7]  # YYYY-MM
+        if month_key not in monthly_data:
+            monthly_data[month_key] = {"paces": [], "hrs": [], "kms": 0, "count": 0}
+        monthly_data[month_key]["paces"].append(pace_str_to_secs(r.get("avg_pace", "9:99")))
+        if r.get("avg_hr"):
+            monthly_data[month_key]["hrs"].append(r["avg_hr"])
+        monthly_data[month_key]["kms"] += r.get("distance_km", 0)
+        monthly_data[month_key]["count"] += 1
+
+    pace_trend = []
+    hr_trend = []
+    volume_trend = []
+    for month in sorted(monthly_data.keys()):
+        d = monthly_data[month]
+        avg_pace_s = sum(d["paces"]) / len(d["paces"])
+        pace_trend.append({
+            "month": month,
+            "avg_pace": f"{int(avg_pace_s // 60)}:{int(avg_pace_s % 60):02d}",
+            "avg_pace_secs": round(avg_pace_s),
+        })
+        if d["hrs"]:
+            avg_hr = sum(d["hrs"]) / len(d["hrs"])
+            hr_trend.append({"month": month, "avg_hr": round(avg_hr, 1)})
+        volume_trend.append({"month": month, "total_km": round(d["kms"], 1), "runs": d["count"]})
+
+    # ---- WEEKLY VOLUME (last 16 weeks) ----
+    from datetime import datetime, timedelta, date, timezone
+    today = date.today()
+    weekly_volume = []
+    for w in range(15, -1, -1):
+        week_start = today - timedelta(days=today.weekday() + 7 * w)
+        week_end = week_start + timedelta(days=6)
+        ws = week_start.isoformat()
+        we = week_end.isoformat()
+        week_km = sum(r.get("distance_km", 0) for r in valid_runs if ws <= r.get("date", "") <= we)
+        week_runs = sum(1 for r in valid_runs if ws <= r.get("date", "") <= we)
+        weekly_volume.append({"week_start": ws, "km": round(week_km, 1), "runs": week_runs})
+
+    # ---- HR ZONE DISTRIBUTION ----
+    zone_counts = {"Z1": 0, "Z2": 0, "Z3": 0, "Z4": 0, "Z5": 0}
+    total_hr_runs = 0
+    for r in valid_runs:
+        hr_pct = r.get("avg_hr_pct") or (round((r["avg_hr"] / max_hr) * 100) if r.get("avg_hr") else None)
+        if hr_pct:
+            total_hr_runs += 1
+            if hr_pct < 65:
+                zone_counts["Z1"] += 1
+            elif hr_pct < 75:
+                zone_counts["Z2"] += 1
+            elif hr_pct < 85:
+                zone_counts["Z3"] += 1
+            elif hr_pct < 92:
+                zone_counts["Z4"] += 1
+            else:
+                zone_counts["Z5"] += 1
+
+    zone_distribution = []
+    for z, count in zone_counts.items():
+        pct = round((count / max(total_hr_runs, 1)) * 100)
+        zone_distribution.append({"zone": z, "count": count, "percentage": pct})
+
+    # ---- ANAEROBIC THRESHOLD ESTIMATE ----
+    # AT typically at ~85-88% of max HR
+    # Estimate from tempo/threshold runs (fastest runs with HR data > 30min)
+    threshold_runs = [r for r in valid_runs if r.get("avg_hr") and r.get("duration_minutes", 0) > 20 and pace_str_to_secs(r.get("avg_pace", "9:99")) < 330]
+    at_hr = None
+    at_pace = None
+    if threshold_runs:
+        sorted_by_pace = sorted(threshold_runs, key=lambda r: pace_str_to_secs(r.get("avg_pace", "9:99")))
+        top_efforts = sorted_by_pace[:5]
+        at_hr = round(sum(r["avg_hr"] for r in top_efforts) / len(top_efforts))
+        avg_pace_s = sum(pace_str_to_secs(r["avg_pace"]) for r in top_efforts) / len(top_efforts)
+        at_pace = f"{int(avg_pace_s // 60)}:{int(avg_pace_s % 60):02d}"
+
+    # ---- SUMMARY STATS ----
+    total_km = round(sum(r.get("distance_km", 0) for r in valid_runs), 1)
+    total_time = round(sum(r.get("duration_minutes", 0) for r in valid_runs), 1)
+    total_runs = len(valid_runs)
+
+    last_30_days = [(today - timedelta(days=i)).isoformat() for i in range(30)]
+    recent_runs = [r for r in valid_runs if r.get("date", "") >= last_30_days[-1]]
+    recent_km = round(sum(r.get("distance_km", 0) for r in recent_runs), 1)
+
+    return {
+        "vo2max": vo2max,
+        "race_predictions": race_predictions,
+        "goal_gap_min": goal_gap_min,
+        "goal_progress_pct": goal_progress_pct,
+        "target_hm_time_str": "1:35:00",
+        "current_hm_pred_str": race_predictions.get("21.1km", {}).get("predicted_time_str", "N/D"),
+        "pace_trend": pace_trend,
+        "hr_trend": hr_trend,
+        "volume_trend": volume_trend,
+        "weekly_volume": weekly_volume,
+        "zone_distribution": zone_distribution,
+        "anaerobic_threshold": {"hr": at_hr, "pace": at_pace},
+        "best_efforts": {k: {"distance": v["distance_km"], "pace": v["avg_pace"], "time": v["duration_minutes"], "date": v["date"], "hr": v.get("avg_hr")} for k, v in best_efforts.items()},
+        "totals": {"total_km": total_km, "total_time_hours": round(total_time / 60, 1), "total_runs": total_runs, "recent_30d_km": recent_km},
+    }
+
 @api_router.get("/profile")
 async def get_profile_data():
     profile = await db.profile.find_one({}, {"_id": 0})

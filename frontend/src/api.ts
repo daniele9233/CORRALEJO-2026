@@ -41,6 +41,8 @@ export const api = {
     apiFetch('/profile', { method: 'PATCH', body: JSON.stringify(data) }),
   getWeeklyHistory: () => apiFetch('/weekly-history'),
   getMedals: () => apiFetch('/medals'),
+  getAnalytics: () => apiFetch('/analytics'),
+  cleanupRuns: () => apiFetch('/runs/cleanup', { method: 'POST' }),
   getStravaProfile: () => apiFetch('/strava/profile'),
   getStravaActivities: () => apiFetch('/strava/activities'),
   syncStrava: () => apiFetch('/strava/sync', { method: 'POST' }),
