@@ -123,6 +123,9 @@ def generate_training_plan():
         {"name": "Picco", "weeks": 5, "km_range": (50, 57), "desc": "Fase di picco e rifinitura"},
         {"name": "Tapering", "weeks": 3, "km_range": (40, 25), "desc": "Scarico pre-gara"},
     ]
+    
+    # Recovery weeks every 4 weeks (weeks 4, 8, 12, 16, 20, 24, 28, 32) - reduce km by 30-40%
+    recovery_weeks = {4, 8, 12, 16, 20, 24, 28, 32}
 
     weeks = []
     current_date = start_date
@@ -135,8 +138,17 @@ def generate_training_plan():
             target_km = round(km_start + (km_end - km_start) * progress, 1)
             week_start = current_date
             week_end = current_date + timedelta(days=6)
+            
+            # Apply recovery week reduction
+            is_recovery = week_num in recovery_weeks
+            if is_recovery and phase["name"] not in ["Tapering", "Ripresa"]:
+                target_km = round(target_km * 0.65, 1)  # 35% reduction
 
-            sessions = generate_week_sessions(phase["name"], week_num, target_km, week_start, i, phase["weeks"])
+            sessions = generate_week_sessions(phase["name"], week_num, target_km, week_start, i, phase["weeks"], is_recovery)
+
+            week_notes = get_week_notes(phase["name"], week_num, i)
+            if is_recovery:
+                week_notes = "⚡ SETTIMANA DI SCARICO - Recupero attivo per prevenire infortuni. " + week_notes
 
             weeks.append({
                 "id": make_id(),
@@ -146,8 +158,9 @@ def generate_training_plan():
                 "phase": phase["name"],
                 "phase_description": phase["desc"],
                 "target_km": target_km,
+                "is_recovery_week": is_recovery,
                 "sessions": sessions,
-                "notes": get_week_notes(phase["name"], week_num, i)
+                "notes": week_notes
             })
 
             current_date += timedelta(days=7)
@@ -155,7 +168,7 @@ def generate_training_plan():
 
     return weeks
 
-def generate_week_sessions(phase, week_num, target_km, week_start, phase_week, total_phase_weeks):
+def generate_week_sessions(phase, week_num, target_km, week_start, phase_week, total_phase_weeks, is_recovery=False):
     sessions = []
 
     if phase == "Ripresa":
@@ -334,11 +347,66 @@ def get_profile():
             "15km": {"time": "1:13:38", "date": "2025-10-28", "pace": "4:54"}
         },
         "medals": {
-            "4km": {"gold_target": "15:30", "gold_pace": "3:52", "status": "silver"},
-            "6km": {"gold_target": "25:00", "gold_pace": "4:10", "status": "silver"},
-            "10km": {"gold_target": "43:00", "gold_pace": "4:18", "status": "silver"},
-            "15km": {"gold_target": "1:08:00", "gold_pace": "4:32", "status": "silver"},
-            "21.1km": {"gold_target": "1:35:00", "gold_pace": "4:30", "status": "locked"}
+            "4km": {
+                "targets": {
+                    "warmup": {"time": "20:00", "pace": "5:00"},
+                    "bronzo": {"time": "18:00", "pace": "4:30"},
+                    "argento": {"time": "17:00", "pace": "4:15"},
+                    "oro": {"time": "16:00", "pace": "4:00"},
+                    "platino": {"time": "15:20", "pace": "3:50"},
+                    "elite": {"time": "14:40", "pace": "3:40"}
+                },
+                "current_best": "16:08",
+                "status": "argento"
+            },
+            "6km": {
+                "targets": {
+                    "warmup": {"time": "33:00", "pace": "5:30"},
+                    "bronzo": {"time": "30:00", "pace": "5:00"},
+                    "argento": {"time": "27:00", "pace": "4:30"},
+                    "oro": {"time": "25:00", "pace": "4:10"},
+                    "platino": {"time": "23:00", "pace": "3:50"},
+                    "elite": {"time": "21:30", "pace": "3:35"}
+                },
+                "current_best": "26:00",
+                "status": "argento"
+            },
+            "10km": {
+                "targets": {
+                    "warmup": {"time": "55:00", "pace": "5:30"},
+                    "bronzo": {"time": "50:00", "pace": "5:00"},
+                    "argento": {"time": "47:00", "pace": "4:42"},
+                    "oro": {"time": "43:00", "pace": "4:18"},
+                    "platino": {"time": "40:00", "pace": "4:00"},
+                    "elite": {"time": "37:00", "pace": "3:42"}
+                },
+                "current_best": "45:31",
+                "status": "argento"
+            },
+            "15km": {
+                "targets": {
+                    "warmup": {"time": "1:22:30", "pace": "5:30"},
+                    "bronzo": {"time": "1:15:00", "pace": "5:00"},
+                    "argento": {"time": "1:15:00", "pace": "5:00"},
+                    "oro": {"time": "1:08:00", "pace": "4:32"},
+                    "platino": {"time": "1:02:30", "pace": "4:10"},
+                    "elite": {"time": "57:00", "pace": "3:48"}
+                },
+                "current_best": "1:13:38",
+                "status": "argento"
+            },
+            "21.1km": {
+                "targets": {
+                    "warmup": {"time": "2:00:00", "pace": "5:41"},
+                    "bronzo": {"time": "1:50:00", "pace": "5:12"},
+                    "argento": {"time": "1:42:00", "pace": "4:50"},
+                    "oro": {"time": "1:35:00", "pace": "4:30"},
+                    "platino": {"time": "1:28:00", "pace": "4:10"},
+                    "elite": {"time": "1:20:00", "pace": "3:48"}
+                },
+                "current_best": None,
+                "status": "locked"
+            }
         },
         "max_weekly_km": 57,
         "injury": {
@@ -657,6 +725,18 @@ async def get_analytics():
             if pct_vo2 > 0:
                 vo2max = round(vo2 / pct_vo2, 1)
 
+    # ---- TARGET VO2MAX for 4:30/km half marathon (1:35:00 = 95 min) ----
+    # Using Daniels formula backwards: need to find VO2max that allows 4:30/km
+    # 4:30/km = 270 sec/km, for 21.1km = 95 min
+    # velocity = 21100m / 95min = 222.1 m/min
+    target_velocity = 21100 / 95.0  # m/min for 1:35:00
+    target_time_min = 95.0
+    # Daniels formula for VO2 at this pace
+    target_vo2 = -4.60 + 0.182258 * target_velocity + 0.000104 * target_velocity * target_velocity
+    # %VO2max at race distance (Daniels)
+    target_pct_vo2 = 0.8 + 0.1894393 * math.exp(-0.012778 * target_time_min) + 0.2989558 * math.exp(-0.1932605 * target_time_min)
+    vo2max_target = round(target_vo2 / target_pct_vo2, 1) if target_pct_vo2 > 0 else None
+
     # ---- RACE PREDICTIONS (Riegel formula) ----
     race_predictions = {}
     ref_run = best_efforts.get("10km") or best_efforts.get("6km") or best_efforts.get("5km") or best_efforts.get("4km")
@@ -720,33 +800,62 @@ async def get_analytics():
         week_runs = sum(1 for r in valid_runs if ws <= r.get("date", "") <= we)
         weekly_volume.append({"week_start": ws, "km": round(week_km, 1), "runs": week_runs})
 
-    # ---- HR ZONE DISTRIBUTION ----
+    # ---- HR ZONE DISTRIBUTION with BPM ranges based on max_hr=180 ----
+    user_max_hr = 180  # User's actual max HR
+    zone_definitions = [
+        {"zone": "Z1", "name": "Recupero", "pct_min": 50, "pct_max": 60},
+        {"zone": "Z2", "name": "Aerobica", "pct_min": 60, "pct_max": 70},
+        {"zone": "Z3", "name": "Tempo", "pct_min": 70, "pct_max": 80},
+        {"zone": "Z4", "name": "Soglia", "pct_min": 80, "pct_max": 90},
+        {"zone": "Z5", "name": "Max", "pct_min": 90, "pct_max": 100},
+    ]
+    
     zone_counts = {"Z1": 0, "Z2": 0, "Z3": 0, "Z4": 0, "Z5": 0}
     total_hr_runs = 0
     for r in valid_runs:
-        hr_pct = r.get("avg_hr_pct") or (round((r["avg_hr"] / max_hr) * 100) if r.get("avg_hr") else None)
+        hr_pct = r.get("avg_hr_pct") or (round((r["avg_hr"] / user_max_hr) * 100) if r.get("avg_hr") else None)
         if hr_pct:
             total_hr_runs += 1
-            if hr_pct < 65:
+            if hr_pct < 60:
                 zone_counts["Z1"] += 1
-            elif hr_pct < 75:
+            elif hr_pct < 70:
                 zone_counts["Z2"] += 1
-            elif hr_pct < 85:
+            elif hr_pct < 80:
                 zone_counts["Z3"] += 1
-            elif hr_pct < 92:
+            elif hr_pct < 90:
                 zone_counts["Z4"] += 1
             else:
                 zone_counts["Z5"] += 1
 
     zone_distribution = []
-    for z, count in zone_counts.items():
+    for zdef in zone_definitions:
+        z = zdef["zone"]
+        count = zone_counts[z]
         pct = round((count / max(total_hr_runs, 1)) * 100)
-        zone_distribution.append({"zone": z, "count": count, "percentage": pct})
+        bpm_min = round(user_max_hr * zdef["pct_min"] / 100)
+        bpm_max = round(user_max_hr * zdef["pct_max"] / 100)
+        zone_distribution.append({
+            "zone": z, 
+            "name": zdef["name"],
+            "count": count, 
+            "percentage": pct,
+            "bpm_min": bpm_min,
+            "bpm_max": bpm_max,
+            "pct_range": f"{zdef['pct_min']}-{zdef['pct_max']}%"
+        })
 
-    # ---- ANAEROBIC THRESHOLD ESTIMATE ----
+    # ---- ANAEROBIC THRESHOLD ESTIMATE (Current and Pre-Injury) ----
     # AT typically at ~85-88% of max HR
-    # Estimate from tempo/threshold runs (fastest runs with HR data > 30min)
-    threshold_runs = [r for r in valid_runs if r.get("avg_hr") and r.get("duration_minutes", 0) > 20 and pace_str_to_secs(r.get("avg_pace", "9:99")) < 330]
+    # Pre-injury data: November 21, 2025 - 6km test at 4:20/km with HR 149 avg
+    pre_injury_at = {
+        "hr": 149,
+        "pace": "4:20",
+        "date": "2025-11-21",
+        "note": "Test 6km pre-infortunio"
+    }
+    
+    # Current AT from tempo/threshold runs (fastest runs with HR data > 20min, post-injury 2026+)
+    threshold_runs = [r for r in valid_runs if r.get("avg_hr") and r.get("duration_minutes", 0) > 20 and pace_str_to_secs(r.get("avg_pace", "9:99")) < 360 and r.get("date", "").startswith("2026")]
     at_hr = None
     at_pace = None
     if threshold_runs:
@@ -755,6 +864,8 @@ async def get_analytics():
         at_hr = round(sum(r["avg_hr"] for r in top_efforts) / len(top_efforts))
         avg_pace_s = sum(pace_str_to_secs(r["avg_pace"]) for r in top_efforts) / len(top_efforts)
         at_pace = f"{int(avg_pace_s // 60)}:{int(avg_pace_s % 60):02d}"
+    
+    current_at = {"hr": at_hr, "pace": at_pace} if at_hr else None
 
     # ---- SUMMARY STATS ----
     total_km = round(sum(r.get("distance_km", 0) for r in valid_runs), 1)
@@ -767,18 +878,20 @@ async def get_analytics():
 
     return {
         "vo2max": vo2max,
+        "vo2max_target": vo2max_target,
+        "user_max_hr": user_max_hr,
         "race_predictions": race_predictions,
         "goal_gap_min": goal_gap_min,
         "goal_progress_pct": goal_progress_pct,
         "target_hm_time_str": "1:35:00",
         "current_hm_pred_str": race_predictions.get("21.1km", {}).get("predicted_time_str", "N/D"),
-        "pace_trend": pace_trend,
-        "hr_trend": hr_trend,
-        "volume_trend": volume_trend,
         "weekly_volume": weekly_volume,
         "zone_distribution": zone_distribution,
-        "anaerobic_threshold": {"hr": at_hr, "pace": at_pace},
-        "best_efforts": {k: {"distance": v["distance_km"], "pace": v["avg_pace"], "time": v["duration_minutes"], "date": v["date"], "hr": v.get("avg_hr")} for k, v in best_efforts.items()},
+        "anaerobic_threshold": {
+            "current": current_at,
+            "pre_injury": pre_injury_at
+        },
+        "best_efforts": {k: {"distance": v["distance_km"], "pace": v["avg_pace"], "time": v["duration_minutes"], "date": v["date"], "avg_hr": v.get("avg_hr"), "max_hr": v.get("max_hr")} for k, v in best_efforts.items()},
         "totals": {"total_km": total_km, "total_time_hours": round(total_time / 60, 1), "total_runs": total_runs, "recent_30d_km": recent_km},
     }
 
@@ -802,26 +915,82 @@ async def update_profile(req: ProfileUpdateRequest):
 
 @api_router.get("/medals")
 async def get_medals():
+    """Get medals with 6 levels: warmup, bronzo, argento, oro, platino, elite"""
     profile = await db.profile.find_one({}, {"_id": 0})
     medals = profile.get("medals", {}) if profile else {}
-    runs = await db.runs.find({}, {"_id": 0}).to_list(1000)
+    runs = await db.runs.find({}, {"_id": 0}).to_list(2000)
+    
+    def time_str_to_secs(time_str):
+        """Convert time string (mm:ss or h:mm:ss) to seconds"""
+        if not time_str:
+            return 99999
+        parts = time_str.split(":")
+        if len(parts) == 3:  # h:mm:ss
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        elif len(parts) == 2:  # mm:ss
+            return int(parts[0]) * 60 + int(parts[1])
+        return 99999
+    
+    medal_levels = ["warmup", "bronzo", "argento", "oro", "platino", "elite"]
+    
     for dist_key, medal_info in medals.items():
         dist_km = float(dist_key.replace("km", ""))
-        target_secs = pace_to_seconds(medal_info["gold_pace"]) * dist_km
-        best_time = None
+        targets = medal_info.get("targets", {})
+        
+        # Find best time for this distance
+        best_time_secs = None
+        best_run = None
         for run in runs:
-            if abs(run.get("distance_km", 0) - dist_km) < 0.2:
+            if abs(run.get("distance_km", 0) - dist_km) < 0.5:
                 run_secs = run.get("duration_minutes", 9999) * 60
-                if best_time is None or run_secs < best_time:
-                    best_time = run_secs
-        if best_time is not None and best_time <= target_secs:
-            medal_info["status"] = "gold"
-        elif best_time is not None:
-            medal_info["status"] = "silver"
-            medal_info["gap_seconds"] = round(best_time - target_secs)
-        else:
+                if best_time_secs is None or run_secs < best_time_secs:
+                    best_time_secs = run_secs
+                    best_run = run
+        
+        if best_time_secs is None:
             medal_info["status"] = "locked"
-    return {"medals": medals}
+            medal_info["next_target"] = targets.get("warmup")
+            medal_info["best_time_str"] = None
+            continue
+        
+        # Determine current medal level
+        achieved_level = None
+        next_level = None
+        for i, level in enumerate(medal_levels):
+            target = targets.get(level)
+            if target:
+                target_secs = time_str_to_secs(target.get("time"))
+                if best_time_secs <= target_secs:
+                    achieved_level = level
+                elif achieved_level and not next_level:
+                    next_level = level
+        
+        medal_info["status"] = achieved_level or "warmup"
+        medal_info["best_time_secs"] = round(best_time_secs)
+        medal_info["best_time_str"] = f"{int(best_time_secs//60)}:{int(best_time_secs%60):02d}" if best_time_secs < 3600 else f"{int(best_time_secs//3600)}:{int((best_time_secs%3600)//60):02d}:{int(best_time_secs%60):02d}"
+        
+        # Calculate gap to next level
+        if next_level and targets.get(next_level):
+            next_target_secs = time_str_to_secs(targets[next_level].get("time"))
+            medal_info["gap_to_next_secs"] = round(best_time_secs - next_target_secs)
+            medal_info["next_target"] = targets[next_level]
+            medal_info["next_level"] = next_level
+        elif achieved_level == "elite":
+            medal_info["next_level"] = None
+            medal_info["next_target"] = None
+        else:
+            # Find first unachieved level
+            for level in medal_levels:
+                target = targets.get(level)
+                if target:
+                    target_secs = time_str_to_secs(target.get("time"))
+                    if best_time_secs > target_secs:
+                        medal_info["next_level"] = level
+                        medal_info["next_target"] = target
+                        medal_info["gap_to_next_secs"] = round(best_time_secs - target_secs)
+                        break
+    
+    return {"medals": medals, "levels": medal_levels}
 
 # ====== STRAVA INTEGRATION ======
 
