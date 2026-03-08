@@ -1,20 +1,22 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "Corralejo 2026",
+    "slug": "corralejo-2026",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
-    "userInterfaceStyle": "automatic",
+    "scheme": "corralejo2026",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.daniele.corralejo2026"
     },
     "android": {
+      "package": "com.daniele.corralejo2026",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000"
+        "backgroundColor": "#09090B"
       },
       "edgeToEdgeEnabled": true
     },
