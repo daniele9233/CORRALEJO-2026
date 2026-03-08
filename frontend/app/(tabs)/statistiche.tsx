@@ -1,17 +1,18 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, ActivityIndicator,
-  RefreshControl, Dimensions,
+  RefreshControl, Dimensions, TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../../src/theme';
 import { api } from '../../src/api';
 
 const SCREEN_W = Dimensions.get('window').width;
 
 export default function StatisticheScreen() {
+  const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -47,7 +48,16 @@ export default function StatisticheScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadData(); }} tintColor={COLORS.lime} />}
       >
         <View style={styles.headerRow}>
-          <Text style={styles.pageTitle}>STATISTICHE</Text>
+          <View style={styles.headerTop}>
+            <Text style={styles.pageTitle}>STATISTICHE</Text>
+            <TouchableOpacity 
+              style={styles.calcButton}
+              onPress={() => router.push('/calcolatore')}
+            >
+              <Ionicons name="calculator" size={20} color={COLORS.lime} />
+              <Text style={styles.calcButtonText}>CALCOLATORE</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* VO2max Ring Gauge with Target */}
@@ -475,7 +485,15 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   headerRow: { paddingHorizontal: SPACING.xl, paddingTop: SPACING.lg },
+  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   pageTitle: { fontSize: FONT_SIZES.xxl, color: COLORS.text, fontWeight: '800' },
+  calcButton: { 
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(190, 242, 100, 0.15)', 
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
+    borderRadius: BORDER_RADIUS.md, borderWidth: 1, borderColor: 'rgba(190, 242, 100, 0.3)',
+  },
+  calcButtonText: { fontSize: FONT_SIZES.xs, color: COLORS.lime, fontWeight: '700' },
   sectionHeader: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
     paddingHorizontal: SPACING.xl, marginTop: SPACING.xxl, marginBottom: SPACING.md,
