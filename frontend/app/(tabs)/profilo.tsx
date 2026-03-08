@@ -24,6 +24,8 @@ export default function ProfiloScreen() {
   const [editModal, setEditModal] = useState(false);
   const [editAge, setEditAge] = useState('');
   const [editWeight, setEditWeight] = useState('');
+  const [editMaxHr, setEditMaxHr] = useState('');
+  const [editMaxWeeklyKm, setEditMaxWeeklyKm] = useState('');
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [stravaCodeModal, setStravaCodeModal] = useState(false);
@@ -63,6 +65,8 @@ export default function ProfiloScreen() {
     const updates: any = {};
     if (editAge && parseInt(editAge) > 0) updates.age = parseInt(editAge);
     if (editWeight && parseFloat(editWeight) > 0) updates.weight_kg = parseFloat(editWeight);
+    if (editMaxHr && parseInt(editMaxHr) > 0) updates.max_hr = parseInt(editMaxHr);
+    if (editMaxWeeklyKm && parseInt(editMaxWeeklyKm) > 0) updates.max_weekly_km = parseInt(editMaxWeeklyKm);
     if (Object.keys(updates).length === 0) return;
 
     setSaving(true);
@@ -72,6 +76,8 @@ export default function ProfiloScreen() {
       setEditModal(false);
       setEditAge('');
       setEditWeight('');
+      setEditMaxHr('');
+      setEditMaxWeeklyKm('');
     } catch {
       Alert.alert('Errore', 'Impossibile aggiornare il profilo');
     } finally {
@@ -215,6 +221,8 @@ export default function ProfiloScreen() {
               <TouchableOpacity testID="edit-profile-btn" onPress={() => {
                 setEditAge(String(profile.age));
                 setEditWeight(String(profile.weight_kg));
+                setEditMaxHr(String(profile.max_hr || 180));
+                setEditMaxWeeklyKm(String(profile.max_weekly_km || 60));
                 setEditModal(true);
               }}>
                 <Ionicons name="pencil" size={18} color={COLORS.lime} />
@@ -231,11 +239,11 @@ export default function ProfiloScreen() {
               </View>
               <View style={styles.statCard}>
                 <Text style={styles.statLabel}>FC MAX</Text>
-                <Text style={styles.statValue}>{profile.max_hr} bpm</Text>
+                <Text style={styles.statValue}>{profile.max_hr || 180} bpm</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={styles.statLabel}>KM MAX/SETT</Text>
-                <Text style={styles.statValue}>{profile.max_weekly_km}</Text>
+                <Text style={styles.statValue}>{profile.max_weekly_km || 60}</Text>
               </View>
             </View>
 
@@ -250,25 +258,6 @@ export default function ProfiloScreen() {
                   <Text style={styles.pbDate}>{pb.date}</Text>
                 </View>
               ))}
-            </View>
-
-            {/* Injury */}
-            <Text style={styles.sectionTitle}>INFORTUNIO</Text>
-            <View style={styles.injuryCard}>
-              <Ionicons name="medkit" size={20} color={COLORS.orange} />
-              <View style={styles.injuryInfo}>
-                <Text style={styles.injuryType}>{profile.injury?.type}</Text>
-                <Text style={styles.injuryStatus}>{profile.injury?.status}</Text>
-                <Text style={styles.injuryDetail}>{profile.injury?.details}</Text>
-              </View>
-            </View>
-
-            {/* Mouth Tape */}
-            <Text style={styles.sectionTitle}>MOUTH TAPE RUNNING</Text>
-            <View style={styles.infoCard}>
-              <Text style={styles.infoRecommendation}>{profile.mouth_tape?.recommendation}</Text>
-              <Text style={styles.infoText}>{profile.mouth_tape?.benefits}</Text>
-              <Text style={styles.infoProtocol}>Protocollo: {profile.mouth_tape?.protocol}</Text>
             </View>
           </>
         )}
@@ -488,6 +477,28 @@ export default function ProfiloScreen() {
               onChangeText={setEditWeight}
               keyboardType="decimal-pad"
               placeholder="Peso in kg"
+              placeholderTextColor={COLORS.textMuted}
+            />
+
+            <Text style={styles.modalLabel}>FC MAX (BPM)</Text>
+            <TextInput
+              testID="edit-maxhr-input"
+              style={styles.modalInput}
+              value={editMaxHr}
+              onChangeText={setEditMaxHr}
+              keyboardType="number-pad"
+              placeholder="FC massima"
+              placeholderTextColor={COLORS.textMuted}
+            />
+
+            <Text style={styles.modalLabel}>KM MAX SETTIMANALI</Text>
+            <TextInput
+              testID="edit-maxkm-input"
+              style={styles.modalInput}
+              value={editMaxWeeklyKm}
+              onChangeText={setEditMaxWeeklyKm}
+              keyboardType="number-pad"
+              placeholder="Km massimi settimanali"
               placeholderTextColor={COLORS.textMuted}
             />
 

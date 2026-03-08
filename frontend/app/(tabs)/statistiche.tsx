@@ -167,7 +167,7 @@ export default function StatisticheScreen() {
         </View>
 
         {/* HR Zone Distribution with BPM Ranges */}
-        <SectionTitle icon="heart-circle" title="ZONE FC (FC MAX: {user_max_hr || 180} BPM)" />
+        <SectionTitle icon="heart-circle" title={`ZONE FC (FC MAX: ${user_max_hr || 180} BPM)`} />
         <View style={styles.zoneCard}>
           {zone_distribution?.map((z: any, idx: number) => {
             const zoneColors = [COLORS.hrZone1, COLORS.hrZone2, COLORS.hrZone3, COLORS.hrZone4, COLORS.hrZone5];
@@ -193,10 +193,10 @@ export default function StatisticheScreen() {
           </View>
         </View>
 
-        {/* Weekly Volume Bars */}
-        <SectionTitle icon="bar-chart" title="VOLUME SETTIMANALE (16 SETT)" />
+        {/* Weekly Volume Bars - Last 8 weeks with details */}
+        <SectionTitle icon="bar-chart" title="VOLUME SETTIMANALE" />
         <View style={styles.chartCard}>
-          <BarChart data={weekly_volume || []} />
+          <WeeklyVolumeChart data={weekly_volume || []} />
         </View>
 
         {/* Best Efforts with Max HR */}
@@ -312,6 +312,54 @@ function BarChart({ data }: { data: any[] }) {
                 width: '85%', height: Math.max(h, 2), borderRadius: 3,
                 backgroundColor: isHigh ? COLORS.lime : d.km > 10 ? COLORS.blue : COLORS.textMuted,
               }} />
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function WeeklyVolumeChart({ data }: { data: any[] }) {
+  if (data.length === 0) return null;
+  // Show last 8 weeks with details
+  const last8 = data.slice(-8);
+  const maxKm = Math.max(...last8.map(d => d.km), 1);
+  const chartH = 80;
+  const MONTHS_SHORT = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+
+  const formatWeekLabel = (weekStart: string) => {
+    const d = new Date(weekStart + 'T00:00:00');
+    return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
+  };
+
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {last8.map((d, i) => {
+          const h = (d.km / maxKm) * chartH;
+          const isHigh = d.km > 30;
+          const isCurrent = i === last8.length - 1;
+          return (
+            <View key={i} style={{ flex: 1, alignItems: 'center' }}>
+              <Text style={{ fontSize: 10, color: COLORS.text, fontWeight: '700', marginBottom: 4 }}>
+                {Math.round(d.km)}
+              </Text>
+              <View style={{
+                width: '100%', height: chartH, borderRadius: 4,
+                backgroundColor: COLORS.cardBorder, justifyContent: 'flex-end', overflow: 'hidden',
+              }}>
+                <View style={{
+                  width: '100%', height: Math.max(h, 3), borderRadius: 4,
+                  backgroundColor: isCurrent ? COLORS.lime : isHigh ? COLORS.green : d.km > 10 ? COLORS.blue : COLORS.textMuted,
+                }} />
+              </View>
+              <Text style={{ fontSize: 8, color: isCurrent ? COLORS.lime : COLORS.textMuted, marginTop: 4, textAlign: 'center' }}>
+                {formatWeekLabel(d.week_start)}
+              </Text>
+              <Text style={{ fontSize: 8, color: COLORS.textMuted }}>
+                {d.runs} 🏃
+              </Text>
             </View>
           );
         })}
