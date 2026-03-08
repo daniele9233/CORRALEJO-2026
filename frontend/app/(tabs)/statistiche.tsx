@@ -38,7 +38,7 @@ export default function StatisticheScreen() {
     );
   }
 
-  const { vo2max, race_predictions, goal_gap_min, goal_progress_pct, pace_trend, hr_trend, weekly_volume, zone_distribution, anaerobic_threshold, best_efforts, totals } = data;
+  const { vo2max, vo2max_target, user_max_hr, race_predictions, goal_gap_min, goal_progress_pct, weekly_volume, zone_distribution, anaerobic_threshold, best_efforts, totals } = data;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -50,7 +50,7 @@ export default function StatisticheScreen() {
           <Text style={styles.pageTitle}>STATISTICHE</Text>
         </View>
 
-        {/* VO2max Ring Gauge */}
+        {/* VO2max Ring Gauge with Target */}
         <View style={styles.vo2Card}>
           <View style={styles.vo2Ring}>
             <RingGauge value={vo2max || 0} max={60} size={120} color={getVo2Color(vo2max)} />
@@ -60,6 +60,13 @@ export default function StatisticheScreen() {
             <Text style={styles.vo2Value}>{vo2max || 'N/D'}</Text>
             <Text style={styles.vo2Unit}>ml/kg/min</Text>
             <Text style={styles.vo2Level}>{getVo2Level(vo2max)}</Text>
+            <View style={styles.vo2TargetRow}>
+              <Ionicons name="flag" size={14} color={COLORS.orange} />
+              <Text style={styles.vo2TargetText}>Target 4:30/km: <Text style={styles.vo2TargetValue}>{vo2max_target || '~52'}</Text></Text>
+            </View>
+            {vo2max && vo2max_target && (
+              <Text style={styles.vo2Gap}>Gap: {(vo2max_target - vo2max).toFixed(1)} ml/kg/min</Text>
+            )}
           </View>
         </View>
 
@@ -109,63 +116,81 @@ export default function StatisticheScreen() {
           })}
         </View>
 
-        {/* Anaerobic Threshold */}
+        {/* Anaerobic Threshold - Current vs Pre-Injury */}
         <SectionTitle icon="pulse" title="SOGLIA ANAEROBICA" />
         <View style={styles.atCard}>
+          {/* Current */}
+          <Text style={styles.atSubtitle}>ATTUALE</Text>
           <View style={styles.atRow}>
             <View style={styles.atItem}>
-              <Ionicons name="heart" size={24} color={COLORS.red} />
-              <Text style={styles.atValue}>{anaerobic_threshold?.hr || 'N/D'}</Text>
+              <Ionicons name="heart" size={22} color={COLORS.red} />
+              <Text style={styles.atValue}>{anaerobic_threshold?.current?.hr || 'N/D'}</Text>
               <Text style={styles.atLabel}>bpm</Text>
             </View>
             <View style={styles.atDivider} />
             <View style={styles.atItem}>
-              <Ionicons name="speedometer" size={24} color={COLORS.blue} />
-              <Text style={styles.atValue}>{anaerobic_threshold?.pace || 'N/D'}</Text>
+              <Ionicons name="speedometer" size={22} color={COLORS.blue} />
+              <Text style={styles.atValue}>{anaerobic_threshold?.current?.pace || 'N/D'}</Text>
               <Text style={styles.atLabel}>/km</Text>
             </View>
             <View style={styles.atDivider} />
             <View style={styles.atItem}>
-              <Ionicons name="fitness" size={24} color={COLORS.lime} />
-              <Text style={styles.atValue}>{anaerobic_threshold?.hr ? Math.round((anaerobic_threshold.hr / 179) * 100) : 'N/D'}</Text>
+              <Ionicons name="fitness" size={22} color={COLORS.lime} />
+              <Text style={styles.atValue}>{anaerobic_threshold?.current?.hr ? Math.round((anaerobic_threshold.current.hr / (user_max_hr || 180)) * 100) : 'N/D'}</Text>
               <Text style={styles.atLabel}>% FC max</Text>
+            </View>
+          </View>
+          
+          {/* Pre-Injury */}
+          <View style={styles.atPreInjurySection}>
+            <Text style={[styles.atSubtitle, { color: COLORS.orange }]}>PRE-INFORTUNIO (Nov 2025)</Text>
+            <View style={styles.atRow}>
+              <View style={styles.atItem}>
+                <Ionicons name="heart" size={22} color={COLORS.orange} />
+                <Text style={[styles.atValue, { color: COLORS.orange }]}>{anaerobic_threshold?.pre_injury?.hr || 149}</Text>
+                <Text style={styles.atLabel}>bpm</Text>
+              </View>
+              <View style={styles.atDivider} />
+              <View style={styles.atItem}>
+                <Ionicons name="speedometer" size={22} color={COLORS.orange} />
+                <Text style={[styles.atValue, { color: COLORS.orange }]}>{anaerobic_threshold?.pre_injury?.pace || '4:20'}</Text>
+                <Text style={styles.atLabel}>/km</Text>
+              </View>
+              <View style={styles.atDivider} />
+              <View style={styles.atItem}>
+                <Ionicons name="fitness" size={22} color={COLORS.orange} />
+                <Text style={[styles.atValue, { color: COLORS.orange }]}>{Math.round((149 / (user_max_hr || 180)) * 100)}</Text>
+                <Text style={styles.atLabel}>% FC max</Text>
+              </View>
             </View>
           </View>
         </View>
 
-        {/* HR Zone Distribution */}
-        <SectionTitle icon="heart-circle" title="DISTRIBUZIONE ZONE FC" />
+        {/* HR Zone Distribution with BPM Ranges */}
+        <SectionTitle icon="heart-circle" title="ZONE FC (FC MAX: {user_max_hr || 180} BPM)" />
         <View style={styles.zoneCard}>
           {zone_distribution?.map((z: any, idx: number) => {
             const zoneColors = [COLORS.hrZone1, COLORS.hrZone2, COLORS.hrZone3, COLORS.hrZone4, COLORS.hrZone5];
-            const zoneNames = ['Recupero', 'Aerobica', 'Tempo', 'Soglia', 'Max'];
             return (
               <View key={z.zone} style={styles.zoneRow}>
                 <View style={styles.zoneLabel}>
                   <View style={[styles.zoneDot, { backgroundColor: zoneColors[idx] }]} />
                   <Text style={styles.zoneNameText}>{z.zone}</Text>
-                  <Text style={styles.zoneNameSub}>{zoneNames[idx]}</Text>
+                </View>
+                <View style={styles.zoneBpmRange}>
+                  <Text style={styles.zoneBpmText}>{z.bpm_min}-{z.bpm_max}</Text>
+                  <Text style={styles.zoneBpmUnit}>bpm</Text>
                 </View>
                 <View style={styles.zoneBarOuter}>
-                  <View style={[styles.zoneBarInner, { width: `${Math.max(z.percentage, 2)}%`, backgroundColor: zoneColors[idx] }]} />
+                  <View style={[styles.zoneBarInner, { width: `${Math.max(z.percentage, 3)}%`, backgroundColor: zoneColors[idx] }]} />
                 </View>
                 <Text style={styles.zonePct}>{z.percentage}%</Text>
               </View>
             );
           })}
-        </View>
-
-        {/* Pace Trend */}
-        <SectionTitle icon="trending-down" title="ANDAMENTO PASSO MEDIO" />
-        <View style={styles.chartCard}>
-          <MiniLineChart data={pace_trend?.map((p: any) => p.avg_pace_secs) || []} labels={pace_trend?.map((p: any) => p.month.slice(5)) || []} color={COLORS.lime} inverted formatVal={(v: number) => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, '0')}`} />
-          <Text style={styles.chartHint}>Più basso = più veloce</Text>
-        </View>
-
-        {/* HR Trend */}
-        <SectionTitle icon="heart" title="ANDAMENTO FC MEDIA" />
-        <View style={styles.chartCard}>
-          <MiniLineChart data={hr_trend?.map((h: any) => h.avg_hr) || []} labels={hr_trend?.map((h: any) => h.month.slice(5)) || []} color={COLORS.red} formatVal={(v: number) => `${Math.round(v)} bpm`} />
+          <View style={styles.zoneFooter}>
+            <Text style={styles.zoneFooterText}>Z1: Recupero | Z2: Aerobica | Z3: Tempo | Z4: Soglia | Z5: Max</Text>
+          </View>
         </View>
 
         {/* Weekly Volume Bars */}
@@ -174,7 +199,7 @@ export default function StatisticheScreen() {
           <BarChart data={weekly_volume || []} />
         </View>
 
-        {/* Best Efforts */}
+        {/* Best Efforts with Max HR */}
         <SectionTitle icon="trophy" title="MIGLIORI PRESTAZIONI" />
         <View style={styles.bestGrid}>
           {Object.entries(best_efforts || {}).map(([dist, eff]: [string, any]) => (
@@ -183,7 +208,18 @@ export default function StatisticheScreen() {
               <Text style={styles.bestPace}>{eff.pace}/km</Text>
               <Text style={styles.bestTime}>{Math.floor(eff.time)}:{String(Math.round((eff.time % 1) * 60)).padStart(2, '0')}</Text>
               <Text style={styles.bestDate}>{eff.date}</Text>
-              {eff.hr && <Text style={styles.bestHr}>FC {eff.hr} bpm</Text>}
+              {eff.avg_hr && (
+                <View style={styles.bestHrRow}>
+                  <Text style={styles.bestHrLabel}>FC media:</Text>
+                  <Text style={styles.bestHr}>{eff.avg_hr}</Text>
+                </View>
+              )}
+              {eff.max_hr && (
+                <View style={styles.bestHrRow}>
+                  <Text style={styles.bestHrLabel}>FC max:</Text>
+                  <Text style={[styles.bestHr, { color: COLORS.red }]}>{eff.max_hr}</Text>
+                </View>
+              )}
             </View>
           ))}
         </View>
@@ -258,46 +294,6 @@ function RingGauge({ value, max, size, color }: { value: number; max: number; si
   );
 }
 
-function MiniLineChart({ data, labels, color, inverted, formatVal }: { data: number[]; labels: string[]; color: string; inverted?: boolean; formatVal?: (v: number) => string }) {
-  if (data.length < 2) return <Text style={{ color: COLORS.textMuted }}>Dati insufficienti</Text>;
-
-  const chartH = 100;
-  const minV = Math.min(...data);
-  const maxV = Math.max(...data);
-  const range = maxV - minV || 1;
-
-  return (
-    <View>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-        <Text style={{ fontSize: 10, color: COLORS.textMuted }}>{formatVal ? formatVal(inverted ? maxV : minV) : ''}</Text>
-        <Text style={{ fontSize: 10, color: COLORS.textMuted }}>{formatVal ? formatVal(inverted ? minV : maxV) : ''}</Text>
-      </View>
-      <View style={{ height: chartH, flexDirection: 'row', alignItems: 'flex-end', gap: 2 }}>
-        {data.map((v, i) => {
-          const normalized = (v - minV) / range;
-          const h = inverted ? (1 - normalized) * chartH + 4 : normalized * chartH + 4;
-          const isLast = i === data.length - 1;
-          return (
-            <View key={i} style={{ flex: 1, alignItems: 'center', justifyContent: 'flex-end', height: chartH }}>
-              <View style={{
-                width: '80%', height: h, borderRadius: 3,
-                backgroundColor: isLast ? color : color + '80',
-              }} />
-            </View>
-          );
-        })}
-      </View>
-      <View style={{ flexDirection: 'row', marginTop: 4 }}>
-        {labels.map((l, i) => (
-          <View key={i} style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{l}</Text>
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
-
 function BarChart({ data }: { data: any[] }) {
   if (data.length === 0) return null;
   const maxKm = Math.max(...data.map(d => d.km), 1);
@@ -367,6 +363,10 @@ const styles = StyleSheet.create({
   vo2Value: { fontSize: FONT_SIZES.hero, color: COLORS.text, fontWeight: '900', marginTop: 4 },
   vo2Unit: { fontSize: FONT_SIZES.sm, color: COLORS.textMuted },
   vo2Level: { fontSize: FONT_SIZES.md, color: COLORS.lime, fontWeight: '700', marginTop: 4 },
+  vo2TargetRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: SPACING.sm },
+  vo2TargetText: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
+  vo2TargetValue: { color: COLORS.orange, fontWeight: '700' },
+  vo2Gap: { fontSize: FONT_SIZES.xs, color: COLORS.orange, marginTop: 2 },
 
   // Goal
   goalCard: {
@@ -406,26 +406,32 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.lg, padding: SPACING.xl,
     borderWidth: 1, borderColor: COLORS.cardBorder,
   },
+  atSubtitle: { fontSize: FONT_SIZES.xs, color: COLORS.lime, fontWeight: '700', letterSpacing: 1, marginBottom: SPACING.sm, textAlign: 'center' },
   atRow: { flexDirection: 'row', alignItems: 'center' },
-  atItem: { flex: 1, alignItems: 'center', gap: SPACING.xs },
+  atItem: { flex: 1, alignItems: 'center', gap: 2 },
   atDivider: { width: 1, height: 48, backgroundColor: COLORS.cardBorder },
-  atValue: { fontSize: FONT_SIZES.xxl, color: COLORS.text, fontWeight: '900' },
+  atValue: { fontSize: FONT_SIZES.xl, color: COLORS.text, fontWeight: '900' },
   atLabel: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
+  atPreInjurySection: { marginTop: SPACING.lg, paddingTop: SPACING.lg, borderTopWidth: 1, borderTopColor: COLORS.cardBorder },
 
   // HR Zones
   zoneCard: {
     marginHorizontal: SPACING.xl, backgroundColor: COLORS.card,
     borderRadius: BORDER_RADIUS.lg, padding: SPACING.lg,
-    borderWidth: 1, borderColor: COLORS.cardBorder, gap: SPACING.md,
+    borderWidth: 1, borderColor: COLORS.cardBorder, gap: SPACING.sm,
   },
   zoneRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  zoneLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, width: 100 },
+  zoneLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, width: 50 },
   zoneDot: { width: 10, height: 10, borderRadius: 5 },
   zoneNameText: { fontSize: FONT_SIZES.sm, color: COLORS.text, fontWeight: '700' },
-  zoneNameSub: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
-  zoneBarOuter: { flex: 1, height: 12, backgroundColor: COLORS.cardBorder, borderRadius: 6, overflow: 'hidden' },
-  zoneBarInner: { height: '100%', borderRadius: 6 },
+  zoneBpmRange: { width: 70, flexDirection: 'row', alignItems: 'baseline', gap: 2 },
+  zoneBpmText: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, fontWeight: '600' },
+  zoneBpmUnit: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
+  zoneBarOuter: { flex: 1, height: 14, backgroundColor: COLORS.cardBorder, borderRadius: 7, overflow: 'hidden' },
+  zoneBarInner: { height: '100%', borderRadius: 7 },
   zonePct: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, fontWeight: '700', width: 36, textAlign: 'right' },
+  zoneFooter: { marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.cardBorder },
+  zoneFooterText: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, textAlign: 'center' },
 
   // Charts
   chartCard: {
@@ -433,7 +439,6 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.lg, padding: SPACING.lg,
     borderWidth: 1, borderColor: COLORS.cardBorder,
   },
-  chartHint: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, textAlign: 'center', marginTop: SPACING.sm, fontStyle: 'italic' },
 
   // Best efforts
   bestGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginHorizontal: SPACING.xl },
@@ -446,7 +451,9 @@ const styles = StyleSheet.create({
   bestPace: { fontSize: FONT_SIZES.lg, color: COLORS.text, fontWeight: '900', marginTop: 4 },
   bestTime: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, marginTop: 2 },
   bestDate: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, marginTop: 4 },
-  bestHr: { fontSize: FONT_SIZES.xs, color: COLORS.orange, marginTop: 2 },
+  bestHrRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  bestHrLabel: { fontSize: 9, color: COLORS.textMuted },
+  bestHr: { fontSize: FONT_SIZES.xs, color: COLORS.orange, fontWeight: '600' },
 
   // Totals
   totalsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginHorizontal: SPACING.xl },

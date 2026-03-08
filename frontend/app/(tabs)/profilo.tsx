@@ -275,47 +275,79 @@ export default function ProfiloScreen() {
 
         {activeTab === 'medaglie' && (
           <>
-            <Text style={styles.introText}>Obiettivi di tempo per conquistare la medaglia d'oro su ogni distanza</Text>
+            <Text style={styles.introText}>Sistema medaglie a 6 livelli: Warm-up, Bronzo, Argento, Oro, Platino, Elite</Text>
             {Object.entries(medals).map(([dist, medal]: [string, any]) => {
-              const isGold = medal.status === 'gold';
-              const isSilver = medal.status === 'silver';
-              const isLocked = medal.status === 'locked';
+              const status = medal.status || 'locked';
+              const targets = medal.targets || {};
+              const medalEmojis: Record<string, string> = {
+                'warmup': '🏃',
+                'bronzo': '🥉',
+                'argento': '🥈',
+                'oro': '🥇',
+                'platino': '💎',
+                'elite': '👑',
+                'locked': '🔒'
+              };
+              const medalLabels: Record<string, string> = {
+                'warmup': 'WARM-UP',
+                'bronzo': 'BRONZO',
+                'argento': 'ARGENTO',
+                'oro': 'ORO',
+                'platino': 'PLATINO',
+                'elite': 'ELITE',
+                'locked': 'DA SBLOCCARE'
+              };
+              const medalColors: Record<string, string> = {
+                'warmup': COLORS.textMuted,
+                'bronzo': '#CD7F32',
+                'argento': '#C0C0C0',
+                'oro': '#FFD700',
+                'platino': '#E5E4E2',
+                'elite': COLORS.lime,
+                'locked': COLORS.textMuted
+              };
+              const isLocked = status === 'locked';
               return (
-                <View key={dist} style={[styles.medalCard, isGold && styles.medalGold, isSilver && styles.medalSilver]}>
+                <View key={dist} style={[styles.medalCard, { borderColor: medalColors[status] + '40' }]}>
                   <View style={styles.medalHeader}>
                     <View style={styles.medalIconContainer}>
-                      <Text style={styles.medalIcon}>
-                        {isGold ? '🥇' : isSilver ? '🥈' : '🔒'}
-                      </Text>
+                      <Text style={styles.medalIcon}>{medalEmojis[status] || '🔒'}</Text>
                     </View>
                     <View style={styles.medalInfo}>
                       <Text style={styles.medalDist}>{dist.toUpperCase()}</Text>
-                      <Text style={styles.medalStatus}>
-                        {isGold ? 'ORO CONQUISTATO!' : isSilver ? 'ARGENTO - Obiettivo in vista!' : 'DA SBLOCCARE'}
+                      <Text style={[styles.medalStatus, { color: medalColors[status] }]}>
+                        {medalLabels[status] || 'DA SBLOCCARE'}
                       </Text>
+                      {medal.best_time_str && (
+                        <Text style={styles.medalBestTime}>PB: {medal.best_time_str}</Text>
+                      )}
                     </View>
                   </View>
-                  <View style={styles.medalTargets}>
-                    <View style={styles.medalTarget}>
-                      <Text style={styles.medalTargetLabel}>TARGET ORO</Text>
-                      <Text style={styles.medalTargetValue}>{medal.gold_target}</Text>
-                      <Text style={styles.medalTargetPace}>{medal.gold_pace}/km</Text>
-                    </View>
-                    {isSilver && medal.gap_seconds && (
-                      <View style={styles.medalTarget}>
-                        <Text style={styles.medalTargetLabel}>GAP</Text>
-                        <Text style={[styles.medalTargetValue, { color: COLORS.orange }]}>
-                          {Math.floor(medal.gap_seconds / 60)}:{String(medal.gap_seconds % 60).padStart(2, '0')}
-                        </Text>
-                        <Text style={styles.medalTargetPace}>da recuperare</Text>
-                      </View>
-                    )}
+                  
+                  {/* All 6 targets */}
+                  <View style={styles.medalTargetsGrid}>
+                    {['warmup', 'bronzo', 'argento', 'oro', 'platino', 'elite'].map((level) => {
+                      const target = targets[level];
+                      if (!target) return null;
+                      const isAchieved = ['warmup', 'bronzo', 'argento', 'oro', 'platino', 'elite'].indexOf(status) >= ['warmup', 'bronzo', 'argento', 'oro', 'platino', 'elite'].indexOf(level);
+                      const isNext = medal.next_level === level;
+                      return (
+                        <View key={level} style={[styles.medalTargetItem, isAchieved && styles.medalTargetAchieved, isNext && styles.medalTargetNext]}>
+                          <Text style={styles.medalTargetEmoji}>{medalEmojis[level]}</Text>
+                          <Text style={[styles.medalTargetTime, isAchieved && { color: COLORS.lime }]}>{target.time}</Text>
+                          <Text style={styles.medalTargetPaceSmall}>{target.pace}/km</Text>
+                        </View>
+                      );
+                    })}
                   </View>
-                  {isSilver && (
-                    <View style={styles.medalProgress}>
-                      <View style={styles.medalProgressBar}>
-                        <View style={[styles.medalProgressFill, { width: `${Math.max(10, 100 - (medal.gap_seconds / 10))}%` }]} />
-                      </View>
+                  
+                  {/* Gap to next level */}
+                  {medal.gap_to_next_secs && medal.next_level && (
+                    <View style={styles.medalGapRow}>
+                      <Text style={styles.medalGapLabel}>Per {medalLabels[medal.next_level]}:</Text>
+                      <Text style={styles.medalGapValue}>
+                        -{Math.floor(medal.gap_to_next_secs / 60)}:{String(Math.abs(medal.gap_to_next_secs % 60)).padStart(2, '0')}
+                      </Text>
                     </View>
                   )}
                 </View>
@@ -644,6 +676,21 @@ const styles = StyleSheet.create({
   medalProgress: { marginTop: SPACING.md },
   medalProgressBar: { height: 6, backgroundColor: COLORS.cardBorder, borderRadius: 3, overflow: 'hidden' },
   medalProgressFill: { height: '100%', backgroundColor: COLORS.lime, borderRadius: 3 },
+  medalBestTime: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, marginTop: 2 },
+  medalTargetsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginTop: SPACING.md },
+  medalTargetItem: { 
+    width: '31%', alignItems: 'center', padding: SPACING.sm, 
+    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: BORDER_RADIUS.md, 
+    borderWidth: 1, borderColor: 'transparent',
+  },
+  medalTargetAchieved: { backgroundColor: 'rgba(190, 242, 100, 0.1)', borderColor: 'rgba(190, 242, 100, 0.2)' },
+  medalTargetNext: { borderColor: COLORS.orange, borderStyle: 'dashed' },
+  medalTargetEmoji: { fontSize: 18 },
+  medalTargetTime: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, fontWeight: '700', marginTop: 2 },
+  medalTargetPaceSmall: { fontSize: 9, color: COLORS.textMuted },
+  medalGapRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, marginTop: SPACING.md, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.cardBorder },
+  medalGapLabel: { fontSize: FONT_SIZES.sm, color: COLORS.textMuted },
+  medalGapValue: { fontSize: FONT_SIZES.md, color: COLORS.orange, fontWeight: '700' },
 
   // Supplements
   suppCard: {
