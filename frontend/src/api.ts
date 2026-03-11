@@ -1,4 +1,4 @@
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://mezzofondo-training.emergent.host';
 
 async function apiFetch(path: string, options?: RequestInit) {
   const url = `${BACKEND_URL}/api${path}`;
@@ -51,4 +51,6 @@ export const api = {
   getStravaAuthUrl: () => apiFetch('/strava/auth-url'),
   exchangeStravaCode: (code: string) =>
     apiFetch('/strava/exchange-code', { method: 'POST', body: JSON.stringify({ code }) }),
+  getVdotPaces: () => apiFetch('/vdot/paces'),
+  recalculatePlanPaces: () => apiFetch('/training-plan/recalculate-paces', { method: 'POST' }),
 };

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, TextInput, Modal, Alert, Image,
+  ActivityIndicator, TextInput, Modal, Alert, Image, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +20,7 @@ export default function ProfiloScreen() {
   const [stravaProfile, setStravaProfile] = useState<any>(null);
   const [stravaError, setStravaError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'profilo' | 'medaglie' | 'integratori' | 'esercizi' | 'test'>('profilo');
   const [editModal, setEditModal] = useState(false);
   const [editAge, setEditAge] = useState('');
@@ -52,8 +53,9 @@ export default function ProfiloScreen() {
       } catch {
         setStravaError('Strava non raggiungibile');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setLoadError(e?.message || 'Errore caricamento profilo');
     } finally {
       setLoading(false);
     }
@@ -95,7 +97,14 @@ export default function ProfiloScreen() {
         setStravaAuthUrl(authData.url);
         setStravaCodeModal(true);
       } else {
-        Alert.alert('Strava Sync', result.message || `Sincronizzate ${result.synced} nuove corse`);
+        // Build message: sync summary + adaptation result if any
+        let alertTitle = 'Strava Sync';
+        let alertMsg = result.message || `Sincronizzate ${result.synced} nuove corse`;
+        if (result.adaptation && result.adaptation.adapted) {
+          alertTitle = 'Sync + Piano Aggiornato';
+          alertMsg += `\n\n${result.adaptation.message}`;
+        }
+        Alert.alert(alertTitle, alertMsg);
         loadData();
       }
     } catch {
@@ -109,7 +118,14 @@ export default function ProfiloScreen() {
     try {
       const authData = await api.getStravaAuthUrl();
       setStravaAuthUrl(authData.url);
-      setStravaCodeModal(true);
+      // Try to open in system browser (deep link will handle the callback)
+      const canOpen = await Linking.canOpenURL(authData.url);
+      if (canOpen) {
+        await Linking.openURL(authData.url);
+      } else {
+        // Fallback: show manual code modal
+        setStravaCodeModal(true);
+      }
     } catch {
       Alert.alert('Errore', 'Impossibile ottenere URL autorizzazione');
     }
@@ -137,6 +153,22 @@ export default function ProfiloScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.lime} /></View>
+      </SafeAreaView>
+    );
+  }
+
+  if (loadError || !profile) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <Ionicons name="cloud-offline" size={48} color={COLORS.textMuted} />
+          <Text style={{ color: COLORS.textSecondary, fontSize: 16, marginTop: 16, textAlign: 'center', paddingHorizontal: 32 }}>
+            {loadError || 'Impossibile caricare il profilo'}
+          </Text>
+          <TouchableOpacity onPress={() => { setLoading(true); setLoadError(null); loadData(); }} style={{ marginTop: 20, backgroundColor: COLORS.lime, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20 }}>
+            <Text style={{ color: COLORS.limeDark, fontWeight: '700', fontSize: 14 }}>RIPROVA</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
@@ -207,11 +239,23 @@ export default function ProfiloScreen() {
                   onPress={handleStravaAuth}
                 >
                   <Ionicons name="key" size={14} color="#FC4C02" />
-                  <Text style={styles.stravaAuthText}>Autorizza activity:read_all</Text>
+                  <Text style={styles.stravaAuthText}>Autorizza Strava</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.stravaAuthBtn, { borderColor: COLORS.cardBorder }]}
+                  onPress={() => {
+                    api.getStravaAuthUrl().then(d => {
+                      setStravaAuthUrl(d.url);
+                      setStravaCodeModal(true);
+                    }).catch(() => Alert.alert('Errore', 'Impossibile ottenere URL'));
+                  }}
+                >
+                  <Ionicons name="code-working" size={14} color={COLORS.textMuted} />
+                  <Text style={[styles.stravaAuthText, { color: COLORS.textMuted }]}>Codice manuale</Text>
                 </TouchableOpacity>
               </View>
               <Text style={styles.stravaNote}>
-                Per sincronizzare le corse: 1) Clicca "Autorizza" 2) Apri l'URL nel browser 3) Autorizza su Strava 4) Copia il parametro "code" dall'URL di redirect 5) Incollalo nel campo
+                Clicca "Autorizza Strava" per aprire il browser e autorizzare automaticamente. Se il redirect non funziona, usa "Codice manuale".
               </Text>
             </View>
 

@@ -16,13 +16,16 @@ export default function StatisticheScreen() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
+      setError(null);
       const analytics = await api.getAnalytics();
       setData(analytics);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setError(e?.message || 'Errore caricamento dati');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -31,10 +34,26 @@ export default function StatisticheScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, []));
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.lime} /></View>
+      </SafeAreaView>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <Ionicons name="cloud-offline" size={48} color={COLORS.textMuted} />
+          <Text style={{ color: COLORS.textSecondary, fontSize: FONT_SIZES.body, marginTop: SPACING.md, textAlign: 'center', paddingHorizontal: SPACING.xxl }}>
+            {error || 'Impossibile caricare le statistiche'}
+          </Text>
+          <TouchableOpacity onPress={() => { setLoading(true); loadData(); }} style={{ marginTop: SPACING.lg, backgroundColor: COLORS.lime, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.md, borderRadius: BORDER_RADIUS.full }}>
+            <Text style={{ color: COLORS.limeDark, fontWeight: '700', fontSize: FONT_SIZES.sm }}>RIPROVA</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }

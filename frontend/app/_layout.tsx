@@ -23,6 +23,8 @@ export default function RootLayout() {
         />
         <Stack.Screen name="run-detail" />
         <Stack.Screen name="workout-detail" />
+        <Stack.Screen name="strava-callback" options={{ headerShown: false }} />
+        <Stack.Screen name="periodizzazione" />
         <Stack.Screen
           name="add-test"
           options={{

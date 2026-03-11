@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 import uuid
 from datetime import datetime, date, timedelta, timezone
+import math
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -28,6 +29,138 @@ api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ====== HR ZONE MAP PER SESSION TYPE ======
+SESSION_TYPE_HR_ZONES = {
+    "corsa_lenta": {"zone": "Z2", "min_hr": 118, "max_hr": 146, "mid_hr": 132},
+    "lungo":       {"zone": "Z2", "min_hr": 118, "max_hr": 146, "mid_hr": 132},
+    "progressivo": {"zone": "Z3", "min_hr": 147, "max_hr": 160, "mid_hr": 153},
+    "ripetute":    {"zone": "Z4", "min_hr": 161, "max_hr": 175, "mid_hr": 168},
+    "ripetute_salita": {"zone": "Z4", "min_hr": 161, "max_hr": 175, "mid_hr": 168},
+    "test":        {"zone": "Z5", "min_hr": 176, "max_hr": 200, "mid_hr": 185},
+}
+
+# ====== VDOT / DANIELS PACE ZONES ======
+# Maps session type to Daniels training zone for pace calculation
+SESSION_PACE_ZONE = {
+    "corsa_lenta": "easy",
+    "lungo": "easy",
+    "progressivo": "threshold",
+    "ripetute": "interval",
+    "ripetute_salita": None,   # max effort, no target pace
+    "test": None,
+    "rinforzo": None,
+    "cyclette": None,
+    "riposo": None,
+}
+
+def _vo2_from_velocity(velocity_m_per_min: float) -> float:
+    """Daniels formula: VO2 (ml/kg/min) from running velocity (m/min)."""
+    return -4.60 + 0.182258 * velocity_m_per_min + 0.000104 * velocity_m_per_min * velocity_m_per_min
+
+def _velocity_from_vo2(vo2: float) -> float:
+    """Inverse Daniels formula: velocity (m/min) from VO2 (ml/kg/min).
+    Solves: vo2 = -4.60 + 0.182258*v + 0.000104*v²  using quadratic formula."""
+    a = 0.000104
+    b = 0.182258
+    c = -4.60 - vo2
+    discriminant = b * b - 4 * a * c
+    if discriminant < 0:
+        return 0.0
+    return (-b + math.sqrt(discriminant)) / (2 * a)
+
+def _velocity_to_pace_str(velocity_m_per_min: float) -> str:
+    """Convert velocity (m/min) to pace string (min:sec per km)."""
+    if velocity_m_per_min <= 0:
+        return "8:00"
+    secs_per_km = 1000.0 / velocity_m_per_min * 60.0
+    # Safety caps: 3:00/km to 8:00/km
+    secs_per_km = max(180, min(480, secs_per_km))
+    mins = int(secs_per_km) // 60
+    secs = int(secs_per_km) % 60
+    return f"{mins}:{secs:02d}"
+
+def vdot_training_paces(vdot: float) -> dict:
+    """Calculate Daniels training paces from a VDOT value.
+    Returns dict with keys: easy, marathon, threshold, interval, repetition."""
+    # Each zone is a % of VO2max
+    zone_pcts = {
+        "easy": 0.65,        # 59-74%, we use midpoint ~65%
+        "marathon": 0.79,    # 75-84%, midpoint ~79%
+        "threshold": 0.88,   # 83-90%, use ~88%
+        "interval": 0.98,    # 95-100%, use ~98%
+        "repetition": 1.05,  # 105-110%, use ~105%
+    }
+    paces = {}
+    for zone_name, pct in zone_pcts.items():
+        target_vo2 = vdot * pct
+        velocity = _velocity_from_vo2(target_vo2)
+        paces[zone_name] = _velocity_to_pace_str(velocity)
+    return paces
+
+def _pace_to_seconds(pace_str: str) -> int:
+    """Convert pace string like '4:30' to total seconds (270)."""
+    if not pace_str or pace_str in ('N/D', 'max', ''):
+        return 0
+    try:
+        parts = pace_str.split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError):
+        return 0
+
+def calculate_vdot_from_race(distance_km: float, duration_minutes: float) -> float | None:
+    """Calculate VDOT from a race/test result using Daniels formula."""
+    if distance_km <= 0 or duration_minutes <= 0:
+        return None
+    dist_m = distance_km * 1000
+    velocity = dist_m / duration_minutes  # m/min
+    # Daniels %VO2max at race distance
+    pct_vo2 = (0.8 + 0.1894393 * math.exp(-0.012778 * duration_minutes)
+               + 0.2989558 * math.exp(-0.1932605 * duration_minutes))
+    if pct_vo2 <= 0:
+        return None
+    vo2 = _vo2_from_velocity(velocity)
+    return round(vo2 / pct_vo2, 1)
+
+async def calculate_current_vdot() -> tuple[float | None, dict | None]:
+    """Calculate current VDOT from best post-injury (2026+) race/test efforts.
+    Returns (vdot, best_effort_info) or (None, None)."""
+    runs = await db.runs.find({"date": {"$gte": "2026-01-01"}}, {"_id": 0}).to_list(2000)
+    if not runs:
+        return None, None
+
+    def pace_str_to_secs(p):
+        if not p or ':' not in p:
+            return 9999
+        parts = p.split(':')
+        try:
+            return int(parts[0]) * 60 + int(parts[1])
+        except (ValueError, IndexError):
+            return 9999
+
+    # Find best effort at standard distances
+    best_race = None
+    best_vdot = None
+    for target_dist in [10, 6, 5, 15, 4, 21.1]:
+        candidates = [r for r in runs if abs(r.get("distance_km", 0) - target_dist) < 0.5
+                       and r.get("duration_minutes", 0) > 0]
+        if candidates:
+            # Pick fastest
+            best = min(candidates, key=lambda r: pace_str_to_secs(r.get("avg_pace", "9:99")))
+            vdot = calculate_vdot_from_race(best["distance_km"], best["duration_minutes"])
+            if vdot and (best_vdot is None or vdot > best_vdot):
+                best_vdot = vdot
+                best_race = best
+
+    if best_vdot and best_race:
+        info = {
+            "distance_km": best_race["distance_km"],
+            "duration_minutes": best_race["duration_minutes"],
+            "avg_pace": best_race.get("avg_pace"),
+            "date": best_race.get("date"),
+        }
+        return best_vdot, info
+    return None, None
 
 # ====== MODELS ======
 
@@ -112,8 +245,9 @@ def get_monday(d):
 
 DAYS_IT = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
 
-def generate_training_plan():
-    """Generate complete training plan from March 9, 2026 to December 12, 2026"""
+def generate_training_plan(vdot_paces=None):
+    """Generate complete training plan from March 9, 2026 to December 12, 2026.
+    If vdot_paces dict is provided, session paces are derived from VDOT instead of hardcoded."""
     race_date = date(2026, 12, 12)
     start_date = date(2026, 3, 9)
 
@@ -146,7 +280,7 @@ def generate_training_plan():
             if is_recovery and phase["name"] not in ["Tapering", "Ripresa"]:
                 target_km = round(target_km * 0.65, 1)  # 35% reduction
 
-            sessions = generate_week_sessions(phase["name"], week_num, target_km, week_start, i, phase["weeks"], is_recovery)
+            sessions = generate_week_sessions(phase["name"], week_num, target_km, week_start, i, phase["weeks"], is_recovery, paces=vdot_paces)
 
             week_notes = get_week_notes(phase["name"], week_num, i)
             if is_recovery:
@@ -170,7 +304,8 @@ def generate_training_plan():
 
     return weeks
 
-def generate_week_sessions(phase, week_num, target_km, week_start, phase_week, total_phase_weeks, is_recovery=False):
+def generate_week_sessions(phase, week_num, target_km, week_start, phase_week, total_phase_weeks, is_recovery=False, paces=None):
+    """Generate sessions for a week. If paces dict is provided (from VDOT), overrides hardcoded paces."""
     sessions = []
 
     if phase == "Ripresa":
@@ -242,6 +377,14 @@ def generate_week_sessions(phase, week_num, target_km, week_start, phase_week, t
 
     for t in templates:
         session_date = week_start + timedelta(days=t["day"])
+
+        # Override pace with VDOT-derived pace if available
+        final_pace = t["pace"]
+        if paces and t["pace"] and t["pace"] != "max":
+            daniels_zone = SESSION_PACE_ZONE.get(t["type"])
+            if daniels_zone and daniels_zone in paces:
+                final_pace = paces[daniels_zone]
+
         sessions.append({
             "day": DAYS_IT[t["day"]],
             "date": session_date.isoformat(),
@@ -249,7 +392,7 @@ def generate_week_sessions(phase, week_num, target_km, week_start, phase_week, t
             "title": t["title"],
             "description": t["desc"],
             "target_distance_km": t["km"],
-            "target_pace": t["pace"],
+            "target_pace": final_pace,
             "target_duration_min": t["dur"],
             "completed": False
         })
@@ -458,9 +601,22 @@ async def seed_data():
 
     await db.profile.insert_one(get_profile())
     await db.weekly_history.insert_many(get_weekly_history_data())
-    await db.runs.insert_many(get_seed_runs())
+    seed_runs = get_seed_runs()
+    await db.runs.insert_many(seed_runs)
 
-    plan = generate_training_plan()
+    # Calculate VDOT from seed runs to generate plan with scientific paces
+    vdot_paces = None
+    best_vdot = None
+    for run in seed_runs:
+        if run.get("distance_km", 0) >= 4 and run.get("duration_minutes", 0) > 0:
+            vdot = calculate_vdot_from_race(run["distance_km"], run["duration_minutes"])
+            if vdot and (best_vdot is None or vdot > best_vdot):
+                best_vdot = vdot
+    if best_vdot:
+        vdot_paces = vdot_training_paces(best_vdot)
+        logger.info(f"Seed: VDOT {best_vdot} → paces {vdot_paces}")
+
+    plan = generate_training_plan(vdot_paces=vdot_paces)
     if plan:
         await db.training_plan.insert_many(plan)
 
@@ -468,7 +624,13 @@ async def seed_data():
     await db.exercises.insert_many(get_exercises())
     await db.test_schedule.insert_many(get_test_schedule())
 
-    return {"status": "ok", "message": "Dati inizializzati con successo", "weeks": len(plan)}
+    return {
+        "status": "ok",
+        "message": "Dati inizializzati con successo",
+        "weeks": len(plan),
+        "vdot": best_vdot,
+        "vdot_paces": vdot_paces,
+    }
 
 @api_router.get("/dashboard")
 async def get_dashboard():
@@ -569,6 +731,32 @@ async def toggle_session_complete(req: SessionCompleteRequest):
     await db.training_plan.update_one({"id": req.week_id}, {"$set": {"sessions": sessions}})
     return {"status": "ok"}
 
+class UpdateWeekSessionsRequest(BaseModel):
+    week_start: str  # "2026-03-09"
+    sessions: list
+    target_km: Optional[float] = None
+    notes: Optional[str] = None
+
+@api_router.put("/training-plan/week-sessions")
+async def update_week_sessions(req: UpdateWeekSessionsRequest):
+    """Update all sessions for a specific week (identified by week_start date)"""
+    week = await db.training_plan.find_one({"week_start": req.week_start})
+    if not week:
+        raise HTTPException(404, f"Settimana con inizio {req.week_start} non trovata")
+
+    update_fields = {"sessions": req.sessions}
+    if req.target_km is not None:
+        update_fields["target_km"] = req.target_km
+    if req.notes is not None:
+        update_fields["notes"] = req.notes
+
+    await db.training_plan.update_one(
+        {"week_start": req.week_start},
+        {"$set": update_fields}
+    )
+    updated = await db.training_plan.find_one({"week_start": req.week_start}, {"_id": 0})
+    return {"status": "ok", "week": updated}
+
 @api_router.get("/runs")
 async def get_runs():
     runs = await db.runs.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
@@ -580,7 +768,29 @@ async def get_run(run_id: str):
     if not run:
         raise HTTPException(404, "Corsa non trovata")
     analysis = await db.ai_analyses.find_one({"run_id": run_id}, {"_id": 0})
-    return {"run": run, "analysis": analysis}
+
+    # Find planned session for this run's date
+    planned_session = None
+    run_date = run.get("date", "")
+    if run_date:
+        week = await db.training_plan.find_one(
+            {"week_start": {"$lte": run_date}, "week_end": {"$gte": run_date}},
+            {"_id": 0}
+        )
+        if week:
+            for s in week.get("sessions", []):
+                if s.get("date") == run_date:
+                    planned_session = {
+                        **s,
+                        "week_number": week.get("week_number"),
+                        "phase": week.get("phase"),
+                        "phase_description": week.get("phase_description"),
+                        "target_km_week": week.get("target_km"),
+                        "is_recovery_week": week.get("is_recovery_week", False),
+                    }
+                    break
+
+    return {"run": run, "analysis": analysis, "planned_session": planned_session}
 
 @api_router.post("/runs")
 async def create_run(run: RunCreate):
@@ -597,45 +807,96 @@ async def analyze_run(req: AIAnalyzeRequest):
         raise HTTPException(404, "Corsa non trovata")
 
     profile = await db.profile.find_one({}, {"_id": 0})
-    today = date.today().isoformat()
-    current_week = await db.training_plan.find_one(
-        {"week_start": {"$lte": today}, "week_end": {"$gte": today}},
-        {"_id": 0}
-    )
+    run_date = run.get("date", "")
+
+    # ── Find planned session for THIS run's date ──
+    planned_week = None
+    planned_session = None
+    if run_date:
+        planned_week = await db.training_plan.find_one(
+            {"week_start": {"$lte": run_date}, "week_end": {"$gte": run_date}},
+            {"_id": 0}
+        )
+        if planned_week:
+            for s in planned_week.get("sessions", []):
+                if s.get("date") == run_date:
+                    planned_session = s
+                    break
 
     recent_runs = await db.runs.find({}, {"_id": 0}).sort("date", -1).limit(10).to_list(10)
 
-    system_msg = """Sei un Head Coach di Mezzofondo esperto, specializzato nella preparazione per la Mezza Maratona.
+    # ── Get VDOT data ──
+    vdot_val, _ = await calculate_current_vdot()
+    vdot_paces = vdot_training_paces(vdot_val) if vdot_val else None
+
+    # ── Build system message from actual profile ──
+    p = profile or {}
+    p_name = p.get("name", "Atleta")
+    p_age = p.get("age", "N/D")
+    p_weight = p.get("weight_kg", "N/D")
+    p_max_hr = p.get("max_hr", "N/D")
+    p_target_pace = p.get("target_pace", "4:30")
+    p_target_time = p.get("target_time", "1:35:00")
+
+    injury_block = ""
+    inj = p.get("injury")
+    if inj:
+        injury_block = (
+            f"\n- INFORTUNIO: {inj.get('type', 'N/D')} ({inj.get('date', 'N/D')}), "
+            f"stato: {inj.get('status', 'N/D')}"
+            f"\n- Ripresa corsa: {inj.get('running_resumed', 'N/D')}"
+            f"\n- Dettagli: {inj.get('details', 'N/D')}"
+        )
+
+    pbs_block = ""
+    pbs = p.get("pbs")
+    if pbs:
+        pbs_block = "\n\nPERSONAL BEST:"
+        for dist, data in pbs.items():
+            pbs_block += f"\n- {dist}: {data.get('time', 'N/D')} ({data.get('pace', 'N/D')}/km)"
+
+    vdot_block = ""
+    if vdot_val:
+        vdot_block = f"\n\nVDOT ATTUALE: {vdot_val}"
+        if vdot_paces:
+            vdot_block += (
+                f"\nPASSI DANIELS: Easy {vdot_paces.get('easy')}, "
+                f"Marathon {vdot_paces.get('marathon')}, "
+                f"Threshold {vdot_paces.get('threshold')}, "
+                f"Interval {vdot_paces.get('interval')}, "
+                f"Repetition {vdot_paces.get('repetition')}"
+            )
+
+    system_msg = f"""Sei un Head Coach di Mezzofondo esperto, specializzato nella preparazione per la Mezza Maratona.
 
 PROFILO ATLETA:
-- Età: 40 anni, Peso: 68kg
-- FC massima: 179 bpm
-- Ha iniziato a correre a Febbraio 2025 (~1400km totali)
-- INFORTUNIO: Tendinopatia inserzionale achillea destra (26 Nov 2025), fermo 2 mesi
-- Rientro in corsa: Febbraio 2026
-- Stato attuale: leggerissima rigidità mattutina che sparisce in 10 secondi
+- Nome: {p_name}, Età: {p_age} anni, Peso: {p_weight}kg
+- FC massima: {p_max_hr} bpm{injury_block}
+{pbs_block}
+{vdot_block}
 
 OBIETTIVO: Mezza Maratona Fuerteventura Corralejo, 12 Dicembre 2026
-- Passo obiettivo: 4:30/km
-- Tempo obiettivo: 1h 35m
+- Passo obiettivo: {p_target_pace}/km
+- Tempo obiettivo: {p_target_time}
 
-PERSONAL BEST PRE-INFORTUNIO:
-- 4km: 16:08 (4:01/km)
-- 6km: 26:00 (4:20/km) FC media 149
-- 10km: 45:31 (4:33/km)
-- 15km: 1:13:38 (4:54/km)
+ISTRUZIONI FONDAMENTALI:
+1. CONFRONTA la corsa effettuata con la sessione pianificata per quel giorno
+2. Valuta se l'atleta ha rispettato tipo, passo target e distanza del piano
+3. Analizza la FC rispetto al tipo di sessione (corsa lenta → Z2, ripetute → Z4, ecc.)
+4. Dai un VERDETTO chiaro: allenamento centrato, troppo intenso, troppo blando
+5. Se c'è deviazione dal piano, spiega le CONSEGUENZE (overtraining, adattamento insufficiente)
+6. Suggerisci correzioni specifiche per le prossime sessioni
+7. Considera sempre l'infortunio nelle raccomandazioni
+8. Tono da coach: diretto, motivante, tecnico ma comprensibile, IN ITALIANO
 
-INTEGRATORI ATTUALI: Collagene GELITA + Vitamina C pre-corsa, Creatina, Magnesio, Omega-3, Vitamina D3
+FORMATO RISPOSTA:
+📊 VERDETTO: [Allenamento centrato / Troppo intenso / Troppo blando / Deviazione dal piano]
+📋 PIANO VS REALTÀ: [confronto specifico con i numeri]
+💪 PUNTI POSITIVI: [cosa è andato bene]
+⚠️ ATTENZIONE: [cosa migliorare o rischi]
+🎯 PROSSIMA SESSIONE: [suggerimento concreto per il prossimo allenamento]"""
 
-ISTRUZIONI:
-1. Analizza la corsa fornita confrontandola con il piano di allenamento
-2. Valuta FC, passo, distanza rispetto agli obiettivi
-3. Fornisci feedback specifico e motivante IN ITALIANO
-4. Se necessario, suggerisci modifiche al piano
-5. Considera l'infortunio al tendine d'Achille nelle raccomandazioni
-6. Usa un tono da coach: diretto, motivante, tecnico ma comprensibile
-7. Rispondi in formato strutturato con sezioni chiare"""
-
+    # ── Build user message with plan comparison ──
     run_info = f"""CORSA DA ANALIZZARE:
 - Data: {run.get('date')}
 - Distanza: {run.get('distance_km')} km
@@ -643,17 +904,56 @@ ISTRUZIONI:
 - Passo medio: {run.get('avg_pace')}/km
 - FC media: {run.get('avg_hr', 'N/D')} bpm ({run.get('avg_hr_pct', 'N/D')}% max)
 - FC max: {run.get('max_hr', 'N/D')} bpm ({run.get('max_hr_pct', 'N/D')}% max)
-- Tipo: {run.get('run_type')}
+- Tipo registrato: {run.get('run_type')}
 - Note: {run.get('notes', 'Nessuna')}
 - Luogo: {run.get('location', 'N/D')}"""
 
-    if current_week:
-        run_info += f"\n\nPIANO SETTIMANA CORRENTE: Fase {current_week.get('phase', 'N/D')}, Target {current_week.get('target_km', 'N/D')}km"
+    if planned_session:
+        run_info += f"""
+
+SESSIONE PIANIFICATA PER QUESTO GIORNO:
+- Tipo pianificato: {planned_session.get('type', 'N/D')}
+- Titolo: {planned_session.get('title', 'N/D')}
+- Descrizione: {planned_session.get('description', 'N/D')}
+- Distanza target: {planned_session.get('target_distance_km', 'N/D')} km
+- Passo target: {planned_session.get('target_pace', 'N/D')}/km
+- Durata target: {planned_session.get('target_duration_min', 'N/D')} min"""
+
+        # Calculate deviations
+        planned_dist = planned_session.get("target_distance_km", 0) or 0
+        actual_dist = run.get("distance_km", 0) or 0
+        if planned_dist > 0 and actual_dist > 0:
+            dist_diff_pct = round((actual_dist - planned_dist) / planned_dist * 100, 1)
+            run_info += f"\n- DEVIAZIONE DISTANZA: {'+' if dist_diff_pct > 0 else ''}{dist_diff_pct}%"
+
+        planned_pace_str = planned_session.get("target_pace", "")
+        actual_pace_str = run.get("avg_pace", "")
+        planned_secs = _pace_to_seconds(planned_pace_str)
+        actual_secs = _pace_to_seconds(actual_pace_str)
+        if planned_secs > 0 and actual_secs > 0:
+            pace_diff = actual_secs - planned_secs
+            direction = "più lento" if pace_diff > 0 else "più veloce"
+            pace_diff_pct = round(pace_diff / planned_secs * 100, 1)
+            run_info += f"\n- DEVIAZIONE PASSO: {abs(pace_diff)}s/km {direction} ({'+' if pace_diff_pct > 0 else ''}{pace_diff_pct}%)"
+    else:
+        run_info += "\n\nNESSUNA SESSIONE PIANIFICATA per questo giorno (corsa extra o fuori piano)."
+
+    if planned_week:
+        run_info += f"""
+
+CONTESTO SETTIMANA:
+- Settimana n. {planned_week.get('week_number')}
+- Fase: {planned_week.get('phase')} — {planned_week.get('phase_description', '')}
+- KM target settimana: {planned_week.get('target_km')}
+- Scarico: {'Sì' if planned_week.get('is_recovery_week') else 'No'}"""
 
     if recent_runs:
-        run_info += "\n\nULTIME CORSE:"
+        run_info += "\n\nULTIME 5 CORSE:"
         for r in recent_runs[:5]:
-            run_info += f"\n- {r.get('date')}: {r.get('distance_km')}km a {r.get('avg_pace')}/km, FC {r.get('avg_hr', 'N/D')}bpm"
+            run_info += (
+                f"\n- {r.get('date')}: {r.get('distance_km')}km "
+                f"a {r.get('avg_pace')}/km, FC {r.get('avg_hr', 'N/D')}bpm"
+            )
 
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -1162,6 +1462,81 @@ async def get_adaptation_status():
         }.get(suggestion, "Mantieni piano attuale")
     }
 
+@api_router.get("/vdot/paces")
+async def get_vdot_paces():
+    """Get current VDOT and all Daniels training paces."""
+    vdot, best_effort = await calculate_current_vdot()
+    if vdot is None:
+        return {
+            "vdot": None,
+            "paces": None,
+            "message": "Non ci sono abbastanza dati per calcolare il VDOT. Completa un test o una gara nel 2026."
+        }
+    paces = vdot_training_paces(vdot)
+    based_on = ""
+    if best_effort:
+        dist = best_effort["distance_km"]
+        pace = best_effort.get("avg_pace", "?")
+        dt = best_effort.get("date", "?")
+        dur = best_effort.get("duration_minutes", 0)
+        mins = int(dur)
+        secs = int((dur - mins) * 60)
+        based_on = f"{dist}km in {mins}:{secs:02d} a {pace}/km ({dt})"
+    return {
+        "vdot": vdot,
+        "paces": paces,
+        "based_on": based_on,
+    }
+
+@api_router.post("/training-plan/recalculate-paces")
+async def recalculate_plan_paces():
+    """Recalculate all future training plan paces based on current VDOT."""
+    vdot, best_effort = await calculate_current_vdot()
+    if vdot is None:
+        return {"recalculated": False, "message": "VDOT non disponibile. Completa un test o una gara."}
+
+    paces = vdot_training_paces(vdot)
+    today = date.today()
+    future_weeks = await db.training_plan.find(
+        {"week_start": {"$gte": today.isoformat()}}, {"_id": 0}
+    ).to_list(200)
+
+    updated_weeks = 0
+    for week in future_weeks:
+        new_sessions = []
+        changed = False
+        for session in week.get("sessions", []):
+            new_session = session.copy()
+            session_type = session.get("type", "")
+            daniels_zone = SESSION_PACE_ZONE.get(session_type)
+
+            if daniels_zone and session.get("target_pace") and session["target_pace"] != "max":
+                new_pace = paces[daniels_zone]
+                if new_session["target_pace"] != new_pace:
+                    new_session["target_pace"] = new_pace
+                    changed = True
+
+            new_sessions.append(new_session)
+
+        if changed:
+            await db.training_plan.update_one(
+                {"id": week["id"]},
+                {"$set": {
+                    "sessions": new_sessions,
+                    "vdot_based": True,
+                    "vdot_value": vdot,
+                }}
+            )
+            updated_weeks += 1
+
+    return {
+        "recalculated": True,
+        "vdot": vdot,
+        "paces": paces,
+        "updated_weeks": updated_weeks,
+        "message": f"Ricalcolati i passi di {updated_weeks} settimane con VDOT {vdot}. Easy: {paces['easy']}, Threshold: {paces['threshold']}, Interval: {paces['interval']}/km.",
+    }
+
 @api_router.get("/profile")
 async def get_profile_data():
     profile = await db.profile.find_one({}, {"_id": 0})
@@ -1275,16 +1650,16 @@ class StravaCodeRequest(BaseModel):
 @api_router.get("/strava/auth-url")
 async def get_strava_auth_url():
     """Return the Strava OAuth URL for authorizing with activity:read_all scope"""
-    app_url = os.environ.get('APP_URL', 'http://localhost')
+    redirect_uri = "corralejo://strava-callback"
     url = (
         f"https://www.strava.com/oauth/authorize"
         f"?client_id={STRAVA_CLIENT_ID}"
         f"&response_type=code"
-        f"&redirect_uri={app_url}/exchange_token"
+        f"&redirect_uri={redirect_uri}"
         f"&approval_prompt=force"
         f"&scope=read,activity:read_all"
     )
-    return {"url": url, "instructions": "Apri questo URL nel browser, autorizza, e copia il parametro 'code' dall'URL di redirect."}
+    return {"url": url, "redirect_uri": redirect_uri}
 
 @api_router.post("/strava/exchange-code")
 async def exchange_strava_code(req: StravaCodeRequest):
@@ -1524,15 +1899,27 @@ async def sync_strava_activities():
 
     # ---- AUTO UPDATE PERSONAL BESTS AND MEDALS ----
     # This runs after every sync to ensure PBs and medals are always up to date
+    adaptation_result = None
     if synced > 0 or matched > 0:
         await update_personal_bests_and_medals()
+        # ---- AUTO ADAPT TRAINING PLAN ----
+        try:
+            adaptation_result = await auto_adapt_plan()
+            if adaptation_result and adaptation_result.get("adapted"):
+                logger.info(f"Auto-adaptation after sync: {adaptation_result.get('adaptation_type')} — {adaptation_result.get('message')}")
+        except Exception as e:
+            logger.error(f"Auto-adaptation error after sync: {e}")
+            adaptation_result = {"adapted": False, "message": f"Errore durante l'adattamento: {str(e)}"}
+
+    sync_message = f"Sincronizzate {synced} nuove corse, {matched} abbinate a corse esistenti"
 
     return {
         "synced": synced,
         "matched": matched,
         "total_strava": len(activities),
-        "message": f"Sincronizzate {synced} nuove corse, {matched} abbinate a corse esistenti",
-        "needs_reauth": False
+        "message": sync_message,
+        "needs_reauth": False,
+        "adaptation": adaptation_result,
     }
 
 async def update_personal_bests_and_medals():
@@ -1580,6 +1967,244 @@ async def update_personal_bests_and_medals():
         await db.profile.update_one({}, {"$set": {"pbs": new_pbs}})
     
     logger.info(f"Updated {len(new_pbs)} personal bests after sync")
+
+
+async def auto_adapt_plan():
+    """Automatically adapt future training plan based on recent run performance vs targets.
+    Called after every Strava sync that imports new runs."""
+
+    def pace_to_secs(pace_str):
+        if not pace_str or ':' not in pace_str:
+            return None
+        parts = pace_str.split(':')
+        try:
+            return int(parts[0]) * 60 + int(parts[1])
+        except (ValueError, IndexError):
+            return None
+
+    def secs_to_pace(secs):
+        secs = max(int(round(secs)), 0)
+        return f"{secs // 60}:{secs % 60:02d}"
+
+    today = date.today()
+    two_weeks_ago = (today - timedelta(days=14)).isoformat()
+
+    # Step A: Get recent runs and all training weeks
+    runs = await db.runs.find(
+        {"date": {"$gte": two_weeks_ago}}, {"_id": 0}
+    ).to_list(200)
+
+    if not runs:
+        return {"adapted": False, "adaptation_type": "none", "message": "Nessuna corsa recente da analizzare."}
+
+    all_weeks = await db.training_plan.find({}, {"_id": 0}).to_list(200)
+
+    # Build a lookup: date -> list of planned sessions (with their week and index)
+    planned_by_date = {}
+    for week in all_weeks:
+        for idx, session in enumerate(week.get("sessions", [])):
+            session_date = session.get("date", "")
+            if session_date:
+                planned_by_date.setdefault(session_date, []).append({
+                    "session": session,
+                    "week_id": week["id"],
+                    "session_index": idx,
+                })
+
+    # Step B: Match runs to planned sessions and compute deviations
+    comparisons = []
+    for run in runs:
+        run_date = run.get("date", "")
+        run_pace_secs = pace_to_secs(run.get("avg_pace"))
+        run_hr = run.get("avg_hr")
+        if not run_date or run_pace_secs is None:
+            continue
+
+        planned_sessions = planned_by_date.get(run_date, [])
+        if not planned_sessions:
+            continue
+
+        # Pick the first session with a target_pace for this date
+        matched = None
+        for p in planned_sessions:
+            if p["session"].get("target_pace"):
+                matched = p
+                break
+        if not matched:
+            continue
+
+        target_pace_secs = pace_to_secs(matched["session"]["target_pace"])
+        if target_pace_secs is None or target_pace_secs == 0:
+            continue
+
+        # pace_diff_pct > 0 means runner was FASTER than target
+        pace_diff_pct = ((target_pace_secs - run_pace_secs) / target_pace_secs) * 100
+
+        # HR analysis: check if effort was appropriate for the session type
+        session_type = matched["session"].get("type", "")
+        hr_zone = SESSION_TYPE_HR_ZONES.get(session_type)
+        hr_appropriate = True  # default if no HR data
+        if run_hr and hr_zone:
+            # HR is appropriate if within zone or below zone+5bpm tolerance
+            hr_appropriate = run_hr <= (hr_zone["max_hr"] + 5)
+
+        comparisons.append({
+            "run_date": run_date,
+            "run_pace": run.get("avg_pace"),
+            "target_pace": matched["session"]["target_pace"],
+            "pace_diff_pct": pace_diff_pct,
+            "run_hr": run_hr,
+            "hr_appropriate": hr_appropriate,
+            "session_type": session_type,
+        })
+
+    # Need at least 3 matched comparisons to make a decision
+    if len(comparisons) < 3:
+        return {
+            "adapted": False,
+            "adaptation_type": "none",
+            "message": f"Solo {len(comparisons)} corse abbinate a sessioni con target. Servono almeno 3 per adattare.",
+            "comparisons_count": len(comparisons),
+        }
+
+    # Step C: Calculate weighted average deviation
+    avg_pace_diff = sum(c["pace_diff_pct"] for c in comparisons) / len(comparisons)
+    hr_ok_count = sum(1 for c in comparisons if c["hr_appropriate"])
+    hr_ok_ratio = hr_ok_count / len(comparisons)
+
+    # Decision
+    pace_factor = 1.0      # multiplier for target_pace (< 1 = faster)
+    volume_factor = 1.0    # multiplier for target_km and distances
+    adaptation_type = "none"
+    message_parts = []
+
+    if avg_pace_diff > 5 and hr_ok_ratio >= 0.7:
+        # Strong improvement: ran >5% faster with appropriate HR
+        pace_factor = 0.97       # 3% faster targets
+        volume_factor = 1.10     # 10% more volume
+        adaptation_type = "strong_improvement"
+        pace_change_secs = round(avg_pace_diff / 100 * 270)  # approx change in secs for a ~4:30 pace
+        message_parts.append(f"Ottimi progressi! Corri in media il {avg_pace_diff:.1f}% più veloce del target con FC nella norma.")
+        message_parts.append(f"I passi target sono stati abbassati di ~{pace_change_secs} sec/km e il volume aumentato del 10%.")
+
+    elif avg_pace_diff > 3 and hr_ok_ratio >= 0.6:
+        # Moderate improvement
+        pace_factor = 0.98       # 2% faster targets
+        volume_factor = 1.05     # 5% more volume
+        adaptation_type = "moderate_improvement"
+        message_parts.append(f"Buoni progressi! Corri in media il {avg_pace_diff:.1f}% più veloce del target.")
+        message_parts.append("I passi target sono stati leggermente abbassati e il volume aumentato del 5%.")
+
+    elif avg_pace_diff < -3 or (hr_ok_ratio < 0.4 and avg_pace_diff < 0):
+        # Regression or excessive effort
+        pace_factor = 1.02       # 2% slower targets
+        volume_factor = 0.95     # 5% less volume
+        adaptation_type = "regression"
+        if hr_ok_ratio < 0.4:
+            message_parts.append(f"La FC risulta troppo alta rispetto alle zone target in {int((1-hr_ok_ratio)*100)}% delle corse.")
+        else:
+            message_parts.append(f"Il passo è in media il {abs(avg_pace_diff):.1f}% più lento del target.")
+        message_parts.append("I passi target sono stati alzati e il volume ridotto del 5% per favorire il recupero.")
+
+    else:
+        return {
+            "adapted": False,
+            "adaptation_type": "none",
+            "message": "Le performance sono in linea con il piano. Nessun adattamento necessario.",
+            "avg_pace_diff_pct": round(avg_pace_diff, 1),
+            "comparisons_count": len(comparisons),
+        }
+
+    # Step D: Apply to all future weeks using VDOT-based paces
+    # Try to get current VDOT and adjust it based on performance
+    current_vdot, _ = await calculate_current_vdot()
+    new_vdot_paces = None
+
+    if current_vdot:
+        # Adjust VDOT based on adaptation type
+        vdot_delta = {
+            "strong_improvement": 1.5,
+            "moderate_improvement": 0.7,
+            "regression": -1.0,
+        }.get(adaptation_type, 0)
+        adjusted_vdot = current_vdot + vdot_delta
+        new_vdot_paces = vdot_training_paces(adjusted_vdot)
+        message_parts.append(f"VDOT aggiornato: {current_vdot} → {adjusted_vdot} (Daniels).")
+
+    future_weeks = [w for w in all_weeks if w.get("week_start", "") >= today.isoformat()]
+    adapted_weeks = 0
+    example_changes = []
+
+    for week in future_weeks:
+        new_target_km = round(week.get("target_km", 40) * volume_factor, 1)
+        new_target_km = min(new_target_km, 65)  # cap
+
+        new_sessions = []
+        for session in week.get("sessions", []):
+            new_session = session.copy()
+
+            # Adjust distance
+            if session.get("target_distance_km"):
+                new_dist = round(session["target_distance_km"] * volume_factor, 1)
+                new_session["target_distance_km"] = min(new_dist, 24)  # cap long runs
+
+            # Adjust pace: prefer VDOT-based paces, fallback to % factor
+            if session.get("target_pace") and session["target_pace"] != "max":
+                old_pace = session["target_pace"]
+                session_type = session.get("type", "")
+                daniels_zone = SESSION_PACE_ZONE.get(session_type)
+
+                if new_vdot_paces and daniels_zone and daniels_zone in new_vdot_paces:
+                    # Use VDOT-derived pace
+                    new_pace = new_vdot_paces[daniels_zone]
+                else:
+                    # Fallback: apply % factor
+                    old_secs = pace_to_secs(old_pace)
+                    if old_secs and old_secs > 0:
+                        new_secs = max(old_secs * pace_factor, 210)
+                        new_pace = secs_to_pace(new_secs)
+                    else:
+                        new_pace = old_pace
+
+                new_session["target_pace"] = new_pace
+
+                # Collect example for message (first 2 changes)
+                if len(example_changes) < 2 and old_pace != new_pace:
+                    example_changes.append(
+                        f"{session.get('title', session.get('type', ''))}: {old_pace} → {new_pace}/km"
+                    )
+
+            new_sessions.append(new_session)
+
+        await db.training_plan.update_one(
+            {"id": week["id"]},
+            {"$set": {
+                "target_km": new_target_km,
+                "sessions": new_sessions,
+                "auto_adapted": True,
+                "adaptation_date": today.isoformat(),
+                "vdot_based": True if new_vdot_paces else False,
+                "vdot_value": (current_vdot + vdot_delta) if current_vdot else None,
+            }}
+        )
+        adapted_weeks += 1
+
+    # Step E: Build summary message
+    if example_changes:
+        message_parts.append("Esempi: " + "; ".join(example_changes) + ".")
+
+    return {
+        "adapted": True,
+        "adaptation_type": adaptation_type,
+        "avg_pace_diff_pct": round(avg_pace_diff, 1),
+        "hr_ok_ratio": round(hr_ok_ratio, 2),
+        "pace_factor": pace_factor,
+        "volume_factor": volume_factor,
+        "adapted_weeks": adapted_weeks,
+        "comparisons_count": len(comparisons),
+        "message": " ".join(message_parts),
+    }
+
 
 @api_router.get("/weekly-history")
 async def get_weekly_history():

@@ -6,7 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SESSION_COLORS } from '../src/theme';
+import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SESSION_COLORS, SESSION_ICONS } from '../src/theme';
 import { api } from '../src/api';
 import { Run, AIAnalysis } from '../src/types';
 
@@ -15,6 +15,7 @@ export default function RunDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [run, setRun] = useState<Run | null>(null);
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null);
+  const [planned, setPlanned] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
 
@@ -27,6 +28,7 @@ export default function RunDetailScreen() {
       const data = await api.getRun(id!);
       setRun(data.run);
       setAnalysis(data.analysis);
+      setPlanned(data.planned_session ?? null);
     } catch (e) {
       console.error(e);
     } finally {
@@ -50,16 +52,25 @@ export default function RunDetailScreen() {
   if (loading || !run) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.center}><ActivityIndicator size="large" color={COLORS.lime} /></View>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.lime} />
+        </View>
       </SafeAreaView>
     );
   }
+
+  // Compute deviations for the comparison card
+  const comparison = planned ? buildComparison(run, planned) : null;
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity
+          testID="back-btn"
+          onPress={() => router.back()}
+          style={styles.backBtn}
+        >
           <Ionicons name="chevron-back" size={24} color={COLORS.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>DETTAGLIO CORSA</Text>
@@ -71,13 +82,31 @@ export default function RunDetailScreen() {
         <View style={styles.mainCard}>
           <View style={styles.dateRow}>
             <Text style={styles.dateText}>{formatDate(run.date)}</Text>
-            <View style={[styles.typeBadge, { backgroundColor: (SESSION_COLORS[run.run_type] || COLORS.textMuted) + '20' }]}>
-              <Text style={[styles.typeText, { color: SESSION_COLORS[run.run_type] || COLORS.textSecondary }]}>
+            <View
+              style={[
+                styles.typeBadge,
+                {
+                  backgroundColor:
+                    (SESSION_COLORS[run.run_type] || COLORS.textMuted) + '20',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.typeText,
+                  {
+                    color:
+                      SESSION_COLORS[run.run_type] || COLORS.textSecondary,
+                  },
+                ]}
+              >
                 {run.run_type?.toUpperCase()}
               </Text>
             </View>
           </View>
-          {run.location && <Text style={styles.location}>{run.location}</Text>}
+          {run.location && (
+            <Text style={styles.location}>{run.location}</Text>
+          )}
 
           <View style={styles.bigStats}>
             <View style={styles.bigStat}>
@@ -89,11 +118,194 @@ export default function RunDetailScreen() {
               <Text style={styles.bigUnit}>/km</Text>
             </View>
             <View style={styles.bigStat}>
-              <Text style={styles.bigValue}>{Math.floor(run.duration_minutes)}:{String(Math.round((run.duration_minutes % 1) * 60)).padStart(2, '0')}</Text>
+              <Text style={styles.bigValue}>
+                {Math.floor(run.duration_minutes)}:
+                {String(
+                  Math.round((run.duration_minutes % 1) * 60)
+                ).padStart(2, '0')}
+              </Text>
               <Text style={styles.bigUnit}>tempo</Text>
             </View>
           </View>
         </View>
+
+        {/* ====== PIANO VS REALTÀ ====== */}
+        {planned && comparison && (
+          <View style={styles.compCard}>
+            <View style={styles.compHeader}>
+              <Ionicons name="git-compare" size={18} color={COLORS.lime} />
+              <Text style={styles.compTitle}>PIANO VS REALTÀ</Text>
+            </View>
+
+            {/* Planned session context */}
+            <View style={styles.compPlannedRow}>
+              <View
+                style={[
+                  styles.compPlannedIcon,
+                  {
+                    backgroundColor:
+                      (SESSION_COLORS[planned.type] || COLORS.textMuted) +
+                      '20',
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={(SESSION_ICONS[planned.type] || 'fitness') as any}
+                  size={16}
+                  color={SESSION_COLORS[planned.type] || COLORS.textMuted}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.compPlannedType}>
+                  Pianificato: {planned.type?.replace('_', ' ').toUpperCase()}
+                </Text>
+                <Text style={styles.compPlannedTitle}>{planned.title}</Text>
+              </View>
+              <View style={styles.compPhaseBadge}>
+                <Text style={styles.compPhaseText}>{planned.phase}</Text>
+              </View>
+            </View>
+
+            {/* Comparison rows */}
+            <View style={styles.compGrid}>
+              {/* Distance */}
+              {comparison.distPlanned != null && (
+                <View style={styles.compRow}>
+                  <Text style={styles.compRowLabel}>Distanza</Text>
+                  <View style={styles.compRowValues}>
+                    <Text style={styles.compRowPlanned}>
+                      {comparison.distPlanned} km
+                    </Text>
+                    <Ionicons
+                      name="arrow-forward"
+                      size={14}
+                      color={COLORS.textMuted}
+                    />
+                    <Text style={styles.compRowActual}>
+                      {run.distance_km} km
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.compDevBadge,
+                      {
+                        backgroundColor: getDeviationColor(
+                          comparison.distDevPct,
+                          'distance'
+                        ) + '20',
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.compDevText,
+                        {
+                          color: getDeviationColor(
+                            comparison.distDevPct,
+                            'distance'
+                          ),
+                        },
+                      ]}
+                    >
+                      {comparison.distDevPct > 0 ? '+' : ''}
+                      {comparison.distDevPct}%
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Pace */}
+              {comparison.pacePlanned && (
+                <View style={styles.compRow}>
+                  <Text style={styles.compRowLabel}>Passo</Text>
+                  <View style={styles.compRowValues}>
+                    <Text style={styles.compRowPlanned}>
+                      {comparison.pacePlanned}/km
+                    </Text>
+                    <Ionicons
+                      name="arrow-forward"
+                      size={14}
+                      color={COLORS.textMuted}
+                    />
+                    <Text style={styles.compRowActual}>
+                      {run.avg_pace}/km
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.compDevBadge,
+                      {
+                        backgroundColor: getDeviationColor(
+                          comparison.paceDevSecs,
+                          'pace'
+                        ) + '20',
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.compDevText,
+                        {
+                          color: getDeviationColor(
+                            comparison.paceDevSecs,
+                            'pace'
+                          ),
+                        },
+                      ]}
+                    >
+                      {comparison.paceDevSecs > 0 ? '+' : ''}
+                      {comparison.paceDevSecs}s
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Duration */}
+              {comparison.durPlanned != null && comparison.durPlanned > 0 && (
+                <View style={styles.compRow}>
+                  <Text style={styles.compRowLabel}>Durata</Text>
+                  <View style={styles.compRowValues}>
+                    <Text style={styles.compRowPlanned}>
+                      {comparison.durPlanned} min
+                    </Text>
+                    <Ionicons
+                      name="arrow-forward"
+                      size={14}
+                      color={COLORS.textMuted}
+                    />
+                    <Text style={styles.compRowActual}>
+                      {Math.round(run.duration_minutes)} min
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Week context */}
+            <View style={styles.compWeekRow}>
+              <Text style={styles.compWeekText}>
+                Sett. {planned.week_number} • {planned.phase} •{' '}
+                Target sett. {planned.target_km_week} km
+                {planned.is_recovery_week ? ' • SCARICO' : ''}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* No planned session notice */}
+        {!planned && (
+          <View style={styles.noplanCard}>
+            <Ionicons
+              name="alert-circle"
+              size={18}
+              color={COLORS.orange}
+            />
+            <Text style={styles.noplanText}>
+              Nessuna sessione pianificata per questa data — corsa extra o
+              fuori piano
+            </Text>
+          </View>
+        )}
 
         {/* HR Stats */}
         {run.avg_hr && (
@@ -101,13 +313,35 @@ export default function RunDetailScreen() {
             <Text style={styles.hrTitle}>FREQUENZA CARDIACA</Text>
             <View style={styles.hrStats}>
               <View style={styles.hrStatItem}>
-                <Ionicons name="heart" size={18} color={getHrColor(run.avg_hr_pct)} />
-                <Text style={[styles.hrValue, { color: getHrColor(run.avg_hr_pct) }]}>{run.avg_hr}</Text>
+                <Ionicons
+                  name="heart"
+                  size={18}
+                  color={getHrColor(run.avg_hr_pct)}
+                />
+                <Text
+                  style={[
+                    styles.hrValue,
+                    { color: getHrColor(run.avg_hr_pct) },
+                  ]}
+                >
+                  {run.avg_hr}
+                </Text>
                 <Text style={styles.hrLabel}>bpm media</Text>
               </View>
               <View style={styles.hrStatItem}>
-                <Ionicons name="heart" size={18} color={getHrColor(run.max_hr_pct)} />
-                <Text style={[styles.hrValue, { color: getHrColor(run.max_hr_pct) }]}>{run.max_hr}</Text>
+                <Ionicons
+                  name="heart"
+                  size={18}
+                  color={getHrColor(run.max_hr_pct)}
+                />
+                <Text
+                  style={[
+                    styles.hrValue,
+                    { color: getHrColor(run.max_hr_pct) },
+                  ]}
+                >
+                  {run.max_hr}
+                </Text>
                 <Text style={styles.hrLabel}>bpm max</Text>
               </View>
               <View style={styles.hrStatItem}>
@@ -122,11 +356,36 @@ export default function RunDetailScreen() {
 
             {/* HR Zone Bar */}
             <View style={styles.zoneBar}>
-              <View style={[styles.zone, { flex: 1, backgroundColor: COLORS.hrZone1 }]} />
-              <View style={[styles.zone, { flex: 1, backgroundColor: COLORS.hrZone2 }]} />
-              <View style={[styles.zone, { flex: 1, backgroundColor: COLORS.hrZone3 }]} />
-              <View style={[styles.zone, { flex: 1, backgroundColor: COLORS.hrZone4 }]} />
-              <View style={[styles.zone, { flex: 1, backgroundColor: COLORS.hrZone5 }]} />
+              <View
+                style={[
+                  styles.zone,
+                  { flex: 1, backgroundColor: COLORS.hrZone1 },
+                ]}
+              />
+              <View
+                style={[
+                  styles.zone,
+                  { flex: 1, backgroundColor: COLORS.hrZone2 },
+                ]}
+              />
+              <View
+                style={[
+                  styles.zone,
+                  { flex: 1, backgroundColor: COLORS.hrZone3 },
+                ]}
+              />
+              <View
+                style={[
+                  styles.zone,
+                  { flex: 1, backgroundColor: COLORS.hrZone4 },
+                ]}
+              />
+              <View
+                style={[
+                  styles.zone,
+                  { flex: 1, backgroundColor: COLORS.hrZone5 },
+                ]}
+              />
             </View>
             <View style={styles.zoneLabels}>
               <Text style={styles.zoneLabel}>Z1</Text>
@@ -141,7 +400,11 @@ export default function RunDetailScreen() {
         {/* Notes */}
         {run.notes && (
           <View style={styles.notesCard}>
-            <Ionicons name="document-text" size={18} color={COLORS.textSecondary} />
+            <Ionicons
+              name="document-text"
+              size={18}
+              color={COLORS.textSecondary}
+            />
             <Text style={styles.notesText}>{run.notes}</Text>
           </View>
         )}
@@ -156,7 +419,9 @@ export default function RunDetailScreen() {
           {analysis ? (
             <View style={styles.aiCard}>
               <Text style={styles.aiText}>{analysis.analysis}</Text>
-              <Text style={styles.aiDate}>Analizzata il {formatDateTime(analysis.created_at)}</Text>
+              <Text style={styles.aiDate}>
+                Analizzata il {formatDateTime(analysis.created_at)}
+              </Text>
             </View>
           ) : (
             <TouchableOpacity
@@ -169,8 +434,14 @@ export default function RunDetailScreen() {
                 <ActivityIndicator size="small" color={COLORS.limeDark} />
               ) : (
                 <>
-                  <Ionicons name="sparkles" size={20} color={COLORS.limeDark} />
-                  <Text style={styles.analyzeBtnText}>ANALIZZA QUESTA CORSA</Text>
+                  <Ionicons
+                    name="sparkles"
+                    size={20}
+                    color={COLORS.limeDark}
+                  />
+                  <Text style={styles.analyzeBtnText}>
+                    ANALIZZA CON CONTESTO PIANO
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
@@ -183,6 +454,59 @@ export default function RunDetailScreen() {
   );
 }
 
+/* ──────── helpers ──────── */
+
+function paceToSeconds(pace: string): number {
+  if (!pace) return 0;
+  const parts = pace.split(':');
+  if (parts.length !== 2) return 0;
+  return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+}
+
+function buildComparison(run: Run, planned: any) {
+  const result: any = {};
+
+  const pd = planned.target_distance_km;
+  if (pd && pd > 0) {
+    result.distPlanned = pd;
+    result.distDevPct = Math.round(
+      ((run.distance_km - pd) / pd) * 100 * 10
+    ) / 10;
+  }
+
+  const pp = planned.target_pace;
+  if (pp && pp !== 'max') {
+    result.pacePlanned = pp;
+    const plannedSecs = paceToSeconds(pp);
+    const actualSecs = paceToSeconds(run.avg_pace);
+    if (plannedSecs > 0 && actualSecs > 0) {
+      result.paceDevSecs = actualSecs - plannedSecs;
+    }
+  }
+
+  const pDur = planned.target_duration_min;
+  if (pDur && pDur > 0) {
+    result.durPlanned = pDur;
+  }
+
+  return result;
+}
+
+function getDeviationColor(value: number, type: 'pace' | 'distance'): string {
+  if (type === 'pace') {
+    // Negative = faster (good for quality), Positive = slower
+    if (value <= -10) return COLORS.orange; // way too fast
+    if (value < 0) return COLORS.green;     // slightly faster, ok
+    if (value <= 5) return COLORS.textSecondary; // on target
+    return COLORS.red;                       // too slow
+  }
+  // distance
+  const abs = Math.abs(value);
+  if (abs <= 10) return COLORS.green;       // on target
+  if (abs <= 20) return COLORS.orange;      // moderate deviation
+  return COLORS.red;                         // big deviation
+}
+
 function getHrColor(pct?: number) {
   if (!pct) return COLORS.text;
   if (pct < 70) return COLORS.hrZone1;
@@ -193,78 +517,347 @@ function getHrColor(pct?: number) {
 }
 
 function formatDate(dateStr: string) {
-  const months = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
-  const days = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+  const months = [
+    'Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
+    'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre',
+  ];
+  const days = [
+    'Domenica','Lunedi','Martedi','Mercoledi',
+    'Giovedi','Venerdi','Sabato',
+  ];
   const d = new Date(dateStr + 'T00:00:00');
   return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 function formatDateTime(isoStr: string) {
   const d = new Date(isoStr);
-  const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+  const months = [
+    'Gen','Feb','Mar','Apr','Mag','Giu',
+    'Lug','Ago','Set','Ott','Nov','Dic',
+  ];
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+
+/* ──────── styles ──────── */
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
   },
-  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, fontWeight: '700', letterSpacing: 2 },
+  backBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textSecondary,
+    fontWeight: '700',
+    letterSpacing: 2,
+  },
+
+  /* main card */
   mainCard: {
-    marginHorizontal: SPACING.xl, backgroundColor: COLORS.card,
-    borderRadius: BORDER_RADIUS.lg, padding: SPACING.xl,
-    borderWidth: 1, borderColor: COLORS.cardBorder,
+    marginHorizontal: SPACING.xl,
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
   },
-  dateRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  dateText: { fontSize: FONT_SIZES.md, color: COLORS.text, fontWeight: '600' },
-  typeBadge: { borderRadius: BORDER_RADIUS.sm, paddingHorizontal: SPACING.sm, paddingVertical: 3 },
-  typeText: { fontSize: FONT_SIZES.xs, fontWeight: '700', letterSpacing: 1 },
-  location: { fontSize: FONT_SIZES.sm, color: COLORS.textMuted, marginTop: 4 },
-  bigStats: { flexDirection: 'row', justifyContent: 'space-around', marginTop: SPACING.xl },
+  dateRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  dateText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.text,
+    fontWeight: '600',
+  },
+  typeBadge: {
+    borderRadius: BORDER_RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 3,
+  },
+  typeText: {
+    fontSize: FONT_SIZES.xs,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  location: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textMuted,
+    marginTop: 4,
+  },
+  bigStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: SPACING.xl,
+  },
   bigStat: { alignItems: 'center' },
-  bigValue: { fontSize: FONT_SIZES.xxxl, color: COLORS.text, fontWeight: '900' },
-  bigUnit: { fontSize: FONT_SIZES.sm, color: COLORS.textMuted, marginTop: 2 },
-  hrCard: {
-    marginHorizontal: SPACING.xl, marginTop: SPACING.lg,
-    backgroundColor: COLORS.card, borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.xl, borderWidth: 1, borderColor: COLORS.cardBorder,
+  bigValue: {
+    fontSize: FONT_SIZES.xxxl,
+    color: COLORS.text,
+    fontWeight: '900',
   },
-  hrTitle: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 2, marginBottom: SPACING.md },
-  hrStats: { flexDirection: 'row', justifyContent: 'space-between' },
+  bigUnit: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+
+  /* ── comparison card ── */
+  compCard: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(190, 242, 100, 0.25)',
+  },
+  compHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginBottom: SPACING.lg,
+  },
+  compTitle: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.lime,
+    fontWeight: '700',
+    letterSpacing: 2,
+  },
+  compPlannedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginBottom: SPACING.lg,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
+  },
+  compPlannedIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  compPlannedType: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  compPlannedTitle: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.text,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  compPhaseBadge: {
+    backgroundColor: 'rgba(190, 242, 100, 0.15)',
+    borderRadius: BORDER_RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 3,
+  },
+  compPhaseText: {
+    fontSize: 9,
+    color: COLORS.lime,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+
+  compGrid: { gap: SPACING.md },
+  compRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  compRowLabel: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+    width: 70,
+  },
+  compRowValues: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+  },
+  compRowPlanned: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  compRowActual: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.text,
+    fontWeight: '700',
+  },
+  compDevBadge: {
+    borderRadius: BORDER_RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 2,
+    minWidth: 50,
+    alignItems: 'center',
+  },
+  compDevText: { fontSize: FONT_SIZES.xs, fontWeight: '700' },
+
+  compWeekRow: {
+    marginTop: SPACING.lg,
+    paddingTop: SPACING.md,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.cardBorder,
+  },
+  compWeekText: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+  },
+
+  /* no plan notice */
+  noplanCard: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: 'rgba(249, 115, 22, 0.08)',
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(249, 115, 22, 0.2)',
+  },
+  noplanText: {
+    flex: 1,
+    fontSize: FONT_SIZES.md,
+    color: COLORS.orange,
+    lineHeight: 20,
+  },
+
+  /* HR card */
+  hrCard: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+  },
+  hrTitle: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginBottom: SPACING.md,
+  },
+  hrStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   hrStatItem: { alignItems: 'center', gap: 4 },
-  hrValue: { fontSize: FONT_SIZES.xl, color: COLORS.text, fontWeight: '800' },
+  hrValue: {
+    fontSize: FONT_SIZES.xl,
+    color: COLORS.text,
+    fontWeight: '800',
+  },
   hrLabel: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
   zoneBar: {
-    flexDirection: 'row', height: 6, borderRadius: 3, overflow: 'hidden',
-    marginTop: SPACING.lg, gap: 2,
+    flexDirection: 'row',
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginTop: SPACING.lg,
+    gap: 2,
   },
   zone: { borderRadius: 3 },
-  zoneLabels: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 4 },
+  zoneLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: 4,
+  },
   zoneLabel: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
+
+  /* notes */
   notesCard: {
-    marginHorizontal: SPACING.xl, marginTop: SPACING.lg,
-    backgroundColor: COLORS.card, borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.cardBorder,
-    flexDirection: 'row', gap: SPACING.sm,
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+    flexDirection: 'row',
+    gap: SPACING.sm,
   },
-  notesText: { flex: 1, fontSize: FONT_SIZES.md, color: COLORS.textSecondary, fontStyle: 'italic', lineHeight: 22 },
-  aiSection: { marginHorizontal: SPACING.xl, marginTop: SPACING.xxl },
-  aiHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md },
-  aiTitle: { fontSize: FONT_SIZES.sm, color: COLORS.lime, fontWeight: '700', letterSpacing: 2 },
+  notesText: {
+    flex: 1,
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textSecondary,
+    fontStyle: 'italic',
+    lineHeight: 22,
+  },
+
+  /* AI */
+  aiSection: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.xxl,
+  },
+  aiHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginBottom: SPACING.md,
+  },
+  aiTitle: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.lime,
+    fontWeight: '700',
+    letterSpacing: 2,
+  },
   aiCard: {
-    backgroundColor: COLORS.card, borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.xl, borderWidth: 1, borderColor: 'rgba(190, 242, 100, 0.2)',
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(190, 242, 100, 0.2)',
   },
-  aiText: { fontSize: FONT_SIZES.md, color: COLORS.textSecondary, lineHeight: 24 },
-  aiDate: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, marginTop: SPACING.lg },
+  aiText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textSecondary,
+    lineHeight: 24,
+  },
+  aiDate: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    marginTop: SPACING.lg,
+  },
   analyzeBtn: {
-    backgroundColor: COLORS.lime, borderRadius: BORDER_RADIUS.full,
-    paddingVertical: SPACING.lg, alignItems: 'center', justifyContent: 'center',
-    flexDirection: 'row', gap: SPACING.sm,
+    backgroundColor: COLORS.lime,
+    borderRadius: BORDER_RADIUS.full,
+    paddingVertical: SPACING.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: SPACING.sm,
   },
-  analyzeBtnText: { fontSize: FONT_SIZES.md, color: COLORS.limeDark, fontWeight: '800', letterSpacing: 1 },
+  analyzeBtnText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.limeDark,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
 });

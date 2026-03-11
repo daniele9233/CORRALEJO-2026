@@ -35,6 +35,7 @@ export interface TrainingWeek {
   target_km: number;
   sessions: TrainingSession[];
   notes?: string;
+  is_recovery_week?: boolean;
 }
 
 export interface WeeklyHistory {
