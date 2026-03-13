@@ -1,4 +1,4 @@
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://mezzofondo-training.emergent.host';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://corralejo-backend.onrender.com';
 
 async function apiFetch(path: string, options?: RequestInit) {
   const url = `${BACKEND_URL}/api${path}`;
