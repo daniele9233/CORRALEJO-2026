@@ -69,13 +69,15 @@ export default function StatisticheScreen() {
         <View style={styles.headerRow}>
           <View style={styles.headerTop}>
             <Text style={styles.pageTitle}>STATISTICHE</Text>
-            <TouchableOpacity 
-              style={styles.calcButton}
-              onPress={() => router.push('/calcolatore')}
-            >
-              <Ionicons name="calculator" size={20} color={COLORS.lime} />
-              <Text style={styles.calcButtonText}>CALCOLATORE</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+              <TouchableOpacity
+                style={styles.calcButton}
+                onPress={() => router.push('/progressi')}
+              >
+                <Ionicons name="trending-up" size={20} color={COLORS.lime} />
+                <Text style={styles.calcButtonText}>PROGRESSI</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -195,17 +197,24 @@ export default function StatisticheScreen() {
           </View>
           
           {/* AT History Chart (every 15 days) */}
-          {anaerobic_threshold?.history && anaerobic_threshold.history.length > 0 && (
-            <View style={styles.atHistorySection}>
-              <Text style={[styles.atSubtitle, { color: COLORS.lime, marginBottom: 4 }]}>
-                PROGRESSI SOGLIA (ogni 15 giorni)
-              </Text>
-              <Text style={styles.atHistoryExplain}>
-                Stesso sforzo (FC 140-160 bpm) → Passo più veloce = miglioramento
-              </Text>
+          <View style={styles.atHistorySection}>
+            <Text style={[styles.atSubtitle, { color: COLORS.lime, marginBottom: 4 }]}>
+              PROGRESSI SOGLIA (ogni 15 giorni)
+            </Text>
+            <Text style={styles.atHistoryExplain}>
+              Stesso sforzo (FC 140-160 bpm) → Passo più veloce = miglioramento
+            </Text>
+            {anaerobic_threshold?.history && anaerobic_threshold.history.length > 0 ? (
               <ATHistoryChart history={anaerobic_threshold.history} />
-            </View>
-          )}
+            ) : (
+              <View style={{ alignItems: 'center', paddingVertical: SPACING.lg }}>
+                <Ionicons name="trending-up" size={32} color={COLORS.textMuted} />
+                <Text style={{ color: COLORS.textMuted, fontSize: FONT_SIZES.sm, marginTop: SPACING.sm, textAlign: 'center' }}>
+                  I progressi appariranno quando avrai corse con dati FC (sync Strava)
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
 
         {/* HR Zone Distribution with BPM Ranges */}

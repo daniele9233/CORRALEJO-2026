@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: corralejo-backend
+    runtime: python
+    region: frankfurt
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MONGO_URL
+        value: mongodb+srv://danielepasco_db_user:YOzkXH13qJmzcblb@mcorralejo.65zmtfk.mongodb.net/?appName=MCorralejo
+      - key: DB_NAME
+        value: corralejo
+      - key: PYTHON_VERSION
+        value: "3.11"

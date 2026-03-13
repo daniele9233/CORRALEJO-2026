@@ -16,6 +16,23 @@ export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [completing, setCompleting] = useState(false);
+
+  const handleToggleComplete = async () => {
+    if (!currentWeek || !todaySession || completing) return;
+    setCompleting(true);
+    try {
+      const sessionIdx = sessions.findIndex((s: any) => s.date === today);
+      if (sessionIdx >= 0) {
+        await api.toggleSessionComplete(currentWeek.id, sessionIdx, !todaySession.completed);
+        await loadData();
+      }
+    } catch (e) {
+      console.error('Toggle complete error:', e);
+    } finally {
+      setCompleting(false);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -182,13 +199,35 @@ export default function Dashboard() {
               </View>
             )}
 
-            {/* CTA */}
-            {!todaySession.completed && (
-              <View style={styles.heroCTA}>
-                <Text style={styles.heroCTAText}>VAI ALL'ALLENAMENTO</Text>
-                <Ionicons name="arrow-forward" size={16} color={COLORS.limeDark} />
-              </View>
-            )}
+            {/* CTA buttons */}
+            <View style={styles.heroCTARow}>
+              <TouchableOpacity
+                style={[
+                  styles.heroCompleteBtn,
+                  todaySession.completed && styles.heroCompleteBtnDone,
+                ]}
+                onPress={handleToggleComplete}
+                disabled={completing}
+              >
+                {completing ? (
+                  <ActivityIndicator size="small" color={todaySession.completed ? COLORS.textMuted : COLORS.limeDark} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name={todaySession.completed ? 'checkmark-circle' : 'checkmark-circle-outline'}
+                      size={18}
+                      color={todaySession.completed ? COLORS.lime : COLORS.limeDark}
+                    />
+                    <Text style={[
+                      styles.heroCompleteBtnText,
+                      todaySession.completed && { color: COLORS.lime },
+                    ]}>
+                      {todaySession.completed ? 'COMPLETATO' : 'SEGNA FATTO'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </TouchableOpacity>
         ) : (
           <View style={styles.restCard}>
@@ -613,7 +652,13 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontWeight: '600',
   },
-  heroCTA: {
+  heroCTARow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginTop: SPACING.lg,
+  },
+  heroCompleteBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -621,9 +666,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.lime,
     borderRadius: BORDER_RADIUS.md,
     paddingVertical: SPACING.md,
-    marginTop: SPACING.lg,
   },
-  heroCTAText: {
+  heroCompleteBtnDone: {
+    backgroundColor: 'rgba(190, 242, 100, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(190, 242, 100, 0.3)',
+  },
+  heroCompleteBtnText: {
     fontSize: FONT_SIZES.sm,
     color: COLORS.limeDark,
     fontWeight: '800',

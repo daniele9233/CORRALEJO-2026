@@ -108,6 +108,40 @@ def _pace_to_seconds(pace_str: str) -> int:
     except (ValueError, IndexError):
         return 0
 
+def _generate_basic_analysis(run, planned_session, planned_week):
+    """Generate a basic run analysis without AI."""
+    lines = [f"**Analisi corsa del {run.get('date', 'N/D')}**\n"]
+    lines.append(f"Distanza: {run.get('distance_km', 0)} km a {run.get('avg_pace', 'N/D')}/km")
+    if planned_session:
+        target_dist = planned_session.get('target_distance_km', 0) or 0
+        actual_dist = run.get('distance_km', 0) or 0
+        target_pace = planned_session.get('target_pace', '')
+        actual_pace = run.get('avg_pace', '')
+        if target_dist > 0 and actual_dist > 0:
+            diff_pct = round((actual_dist - target_dist) / target_dist * 100, 1)
+            if abs(diff_pct) < 10:
+                lines.append(f"\n✅ Distanza in linea col piano ({target_dist}km target)")
+            elif diff_pct > 0:
+                lines.append(f"\n⚠️ Hai corso {diff_pct}% più del previsto ({target_dist}km target)")
+            else:
+                lines.append(f"\n⚠️ Hai corso {abs(diff_pct)}% meno del previsto ({target_dist}km target)")
+        t_secs = _pace_to_seconds(target_pace)
+        a_secs = _pace_to_seconds(actual_pace)
+        if t_secs > 0 and a_secs > 0:
+            diff = a_secs - t_secs
+            if abs(diff) <= 10:
+                lines.append(f"✅ Passo in linea col piano ({target_pace}/km target)")
+            elif diff > 0:
+                lines.append(f"⚠️ Passo più lento di {diff}s/km rispetto al piano ({target_pace}/km target)")
+            else:
+                lines.append(f"🚀 Passo più veloce di {abs(diff)}s/km rispetto al piano ({target_pace}/km target)")
+    else:
+        lines.append("\nCorsa extra fuori dal piano settimanale.")
+    if planned_week:
+        lines.append(f"\nFase: {planned_week.get('phase', 'N/D')} — Settimana {planned_week.get('week_number', '?')}")
+    return "\n".join(lines)
+
+
 def calculate_vdot_from_race(distance_km: float, duration_minutes: float) -> float | None:
     """Calculate VDOT from a race/test result using Daniels formula."""
     if distance_km <= 0 or duration_minutes <= 0:
@@ -246,22 +280,23 @@ def get_monday(d):
 DAYS_IT = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
 
 def generate_training_plan(vdot_paces=None):
-    """Generate complete training plan from March 9, 2026 to December 12, 2026.
+    """Generate complete training plan from March 23, 2026 to December 12, 2026.
+    Pre-March 22 runs (incl. Roma relay 10km) are synced via Strava.
     If vdot_paces dict is provided, session paces are derived from VDOT instead of hardcoded."""
     race_date = date(2026, 12, 12)
-    start_date = date(2026, 3, 9)
+    start_date = date(2026, 3, 23)
 
     phases = [
-        {"name": "Ripresa", "weeks": 6, "km_range": (20, 35), "desc": "Ritorno graduale alla corsa dopo infortunio"},
+        {"name": "Ripresa", "weeks": 4, "km_range": (25, 35), "desc": "Ritorno graduale post-staffetta Roma 10km"},
         {"name": "Base Aerobica", "weeks": 8, "km_range": (35, 45), "desc": "Costruzione della base aerobica"},
         {"name": "Sviluppo", "weeks": 8, "km_range": (42, 52), "desc": "Sviluppo della resistenza specifica"},
         {"name": "Preparazione Specifica", "weeks": 8, "km_range": (48, 58), "desc": "Lavori specifici per la mezza maratona"},
-        {"name": "Picco", "weeks": 5, "km_range": (50, 57), "desc": "Fase di picco e rifinitura"},
+        {"name": "Picco", "weeks": 7, "km_range": (50, 57), "desc": "Fase di picco e rifinitura"},
         {"name": "Tapering", "weeks": 3, "km_range": (40, 25), "desc": "Scarico pre-gara"},
     ]
     
-    # Recovery weeks every 4 weeks (weeks 4, 8, 12, 16, 20, 24, 28, 32) - reduce km by 30-40%
-    recovery_weeks = {4, 8, 12, 16, 20, 24, 28, 32}
+    # Recovery weeks every 4 weeks - reduce km by 30-40%
+    recovery_weeks = {4, 8, 12, 16, 20, 24, 28, 32, 36}
 
     weeks = []
     current_date = start_date
@@ -956,14 +991,22 @@ CONTESTO SETTIMANA:
             )
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=EMERGENT_KEY,
-            session_id=f"analysis-{req.run_id}",
-            system_message=system_msg
-        ).with_model("anthropic", "claude-4-sonnet-20250514")
-
-        response = await chat.send_message(UserMessage(text=run_info))
+        import openai
+        ai_key = os.environ.get('OPENAI_API_KEY', '')
+        if not ai_key:
+            # Fallback: generate a basic analysis without AI
+            response = _generate_basic_analysis(run, planned_session, planned_week)
+        else:
+            client_ai = openai.AsyncOpenAI(api_key=ai_key)
+            result = await client_ai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": run_info},
+                ],
+                max_tokens=800,
+            )
+            response = result.choices[0].message.content
 
         analysis_doc = {
             "id": make_id(),
@@ -1218,7 +1261,17 @@ async def get_analytics():
     # ---- ANAEROBIC THRESHOLD HISTORY (every 15 days) ----
     # Track: for runs at similar HR (~150bpm), what pace can you maintain?
     # This shows fitness progression: same HR effort -> faster pace = improvement
-    at_history = []
+    # Always include pre-injury reference point
+    at_history = [{
+        "period_start": "2025-11-17",
+        "period_end": "2025-11-23",
+        "avg_hr": 149,
+        "avg_pace": "4:20",
+        "best_pace": "4:20",
+        "pace_secs": 260,
+        "runs_count": 1,
+        "label": "Pre-Inf."
+    }]
     history_start = date(2025, 11, 1)
     period_days = 15
     current_period_start = history_start
@@ -1879,6 +1932,9 @@ async def sync_strava_activities():
             matched += 1
             continue
 
+        # ---- MATCH RUN TO PLANNED SESSION ----
+        plan_feedback = await _compare_run_to_plan(act)
+
         run_doc = {
             "id": make_id(),
             "date": act["date"],
@@ -1889,19 +1945,38 @@ async def sync_strava_activities():
             "max_hr": round(act["max_hr"]) if act.get("max_hr") else None,
             "avg_hr_pct": round((act["avg_hr"] / 179) * 100) if act.get("avg_hr") else None,
             "max_hr_pct": round((act["max_hr"] / 179) * 100) if act.get("max_hr") else None,
-            "run_type": "easy",
+            "run_type": plan_feedback.get("matched_type", "easy"),
             "notes": f"Importata da Strava: {act.get('name', '')}",
             "location": None,
-            "strava_id": act.get("strava_id")
+            "strava_id": act.get("strava_id"),
+            "plan_feedback": plan_feedback,
         }
         await db.runs.insert_one(run_doc)
         synced += 1
 
+        # Auto-complete matching planned session
+        if plan_feedback.get("week_id") and plan_feedback.get("session_index") is not None:
+            try:
+                week = await db.training_plan.find_one({"id": plan_feedback["week_id"]})
+                if week:
+                    sessions = week.get("sessions", [])
+                    si = plan_feedback["session_index"]
+                    if 0 <= si < len(sessions):
+                        sessions[si]["completed"] = True
+                        await db.training_plan.update_one({"id": plan_feedback["week_id"]}, {"$set": {"sessions": sessions}})
+            except Exception as e:
+                logger.error(f"Auto-complete session error: {e}")
+
     # ---- AUTO UPDATE PERSONAL BESTS AND MEDALS ----
-    # This runs after every sync to ensure PBs and medals are always up to date
     adaptation_result = None
+    vdot_update = None
     if synced > 0 or matched > 0:
         await update_personal_bests_and_medals()
+        # ---- AUTO RECALCULATE VDOT ----
+        try:
+            vdot_update = await auto_recalculate_vdot()
+        except Exception as e:
+            logger.error(f"Auto VDOT recalc error: {e}")
         # ---- AUTO ADAPT TRAINING PLAN ----
         try:
             adaptation_result = await auto_adapt_plan()
@@ -1920,7 +1995,136 @@ async def sync_strava_activities():
         "message": sync_message,
         "needs_reauth": False,
         "adaptation": adaptation_result,
+        "vdot_update": vdot_update,
     }
+
+async def _compare_run_to_plan(activity: dict) -> dict:
+    """Compare a Strava activity against the planned session for that day.
+    Returns feedback: matched_type, pace_diff, distance_diff, verdict."""
+    run_date = activity.get("date", "")
+    feedback = {"matched": False, "matched_type": "easy", "verdict": "extra", "week_id": None, "session_index": None}
+
+    # Find the week containing this date
+    week = await db.training_plan.find_one({"week_start": {"$lte": run_date}, "week_end": {"$gte": run_date}})
+    if not week:
+        return feedback
+
+    # Find the session for this exact date
+    sessions = week.get("sessions", [])
+    for i, s in enumerate(sessions):
+        if s.get("date") == run_date and s.get("type") not in ("riposo", "rinforzo"):
+            feedback["matched"] = True
+            feedback["matched_type"] = s.get("type", "easy")
+            feedback["week_id"] = week.get("id")
+            feedback["session_index"] = i
+            feedback["planned_title"] = s.get("title", "")
+            feedback["planned_km"] = s.get("target_distance_km", 0)
+            feedback["planned_pace"] = s.get("target_pace", "")
+
+            # Distance comparison
+            planned_km = s.get("target_distance_km", 0) or 0
+            actual_km = activity.get("distance_km", 0) or 0
+            if planned_km > 0 and actual_km > 0:
+                dist_diff_pct = round((actual_km - planned_km) / planned_km * 100, 1)
+                feedback["distance_diff_pct"] = dist_diff_pct
+
+            # Pace comparison
+            planned_pace = s.get("target_pace", "")
+            actual_pace = activity.get("avg_pace", "")
+            p_secs = _pace_to_seconds(planned_pace)
+            a_secs = _pace_to_seconds(actual_pace)
+            if p_secs > 0 and a_secs > 0:
+                pace_diff = a_secs - p_secs
+                feedback["pace_diff_secs"] = pace_diff
+                if abs(pace_diff) <= 10:
+                    feedback["verdict"] = "perfetto"
+                elif pace_diff > 15:
+                    feedback["verdict"] = "troppo_lento"
+                elif pace_diff < -15:
+                    feedback["verdict"] = "troppo_veloce"
+                else:
+                    feedback["verdict"] = "ok"
+            else:
+                feedback["verdict"] = "ok"
+            break
+
+    if not feedback["matched"]:
+        feedback["verdict"] = "extra"
+
+    return feedback
+
+
+async def auto_recalculate_vdot() -> dict:
+    """Recalculate VDOT from the best recent race/test and update plan paces if improved."""
+    runs = await db.runs.find({}, {"_id": 0}).sort("date", -1).to_list(500)
+
+    best_vdot = None
+    best_run_info = None
+    for run in runs:
+        dist = run.get("distance_km", 0)
+        dur = run.get("duration_minutes", 0)
+        if dist >= 4 and dur > 0:
+            vdot = calculate_vdot_from_race(dist, dur)
+            if vdot and (best_vdot is None or vdot > best_vdot):
+                best_vdot = vdot
+                best_run_info = f"{dist}km del {run.get('date', '?')} ({run.get('avg_pace', '?')}/km)"
+
+    if not best_vdot:
+        return {"updated": False, "message": "Nessuna corsa valida per calcolare il VDOT"}
+
+    # Check current VDOT stored in profile
+    profile = await db.profile.find_one({}, {"_id": 0})
+    current_vdot = None
+    if profile:
+        current_vdot = profile.get("current_vdot")
+
+    best_vdot = round(best_vdot, 1)
+    result = {"updated": False, "current_vdot": best_vdot, "based_on": best_run_info}
+
+    if current_vdot is None or best_vdot != current_vdot:
+        # Store new VDOT in profile
+        await db.profile.update_one({}, {"$set": {"current_vdot": best_vdot}})
+
+        # Recalculate training paces
+        new_paces = vdot_training_paces(best_vdot)
+        if new_paces:
+            # Update all FUTURE weeks' sessions with new paces
+            today = date.today().isoformat()
+            future_weeks = await db.training_plan.find({"week_start": {"$gte": today}}).to_list(100)
+            weeks_updated = 0
+            for week in future_weeks:
+                sessions = week.get("sessions", [])
+                updated = False
+                for s in sessions:
+                    stype = s.get("type", "")
+                    if stype == "corsa_lenta" and new_paces.get("easy"):
+                        s["target_pace"] = new_paces["easy"]
+                        updated = True
+                    elif stype == "lungo" and new_paces.get("long"):
+                        s["target_pace"] = new_paces["long"]
+                        updated = True
+                    elif stype == "progressivo" and new_paces.get("tempo"):
+                        s["target_pace"] = new_paces["tempo"]
+                        updated = True
+                    elif stype == "ripetute" and new_paces.get("interval"):
+                        s["target_pace"] = new_paces["interval"]
+                        updated = True
+                if updated:
+                    await db.training_plan.update_one({"id": week["id"]}, {"$set": {"sessions": sessions}})
+                    weeks_updated += 1
+
+            result["updated"] = True
+            result["new_paces"] = new_paces
+            result["weeks_updated"] = weeks_updated
+            result["message"] = f"VDOT aggiornato a {best_vdot} (da {best_run_info}). Ritmi aggiornati per {weeks_updated} settimane future."
+            logger.info(result["message"])
+        else:
+            result["message"] = f"VDOT {best_vdot} calcolato ma impossibile derivare i ritmi"
+    else:
+        result["message"] = f"VDOT invariato a {best_vdot}"
+
+    return result
+
 
 async def update_personal_bests_and_medals():
     """Update personal bests and medals based on current runs data"""

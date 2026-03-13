@@ -20,7 +20,7 @@ const PHASE_COLORS: Record<string, string> = {
 };
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
-const BAR_WIDTH = Math.max(20, (SCREEN_WIDTH - 80) / 38);
+const BAR_WIDTH = 28;
 
 export default function PeriodizzazioneScreen() {
   const router = useRouter();
@@ -148,7 +148,7 @@ export default function PeriodizzazioneScreen() {
             return (
               <View key={w.id || idx} style={styles.barColumn}>
                 <Text style={[styles.barKm, isCurrent && { color: COLORS.lime, fontWeight: '800' }]}>
-                  {w.target_km}
+                  {Math.round(w.target_km)}
                 </Text>
                 <View style={[styles.barTrack, { height: 150 }]}>
                   {/* Target bar */}
@@ -211,19 +211,19 @@ export default function PeriodizzazioneScreen() {
               <View style={styles.phaseStats}>
                 <View style={styles.phaseStat}>
                   <Text style={styles.phaseStatValue}>{p.count}</Text>
-                  <Text style={styles.phaseStatLabel}>settimane</Text>
+                  <Text style={styles.phaseStatLabel}>sett.</Text>
                 </View>
                 <View style={styles.phaseStat}>
                   <Text style={styles.phaseStatValue}>{totalKm}</Text>
-                  <Text style={styles.phaseStatLabel}>km totali</Text>
+                  <Text style={styles.phaseStatLabel}>km tot</Text>
                 </View>
                 <View style={styles.phaseStat}>
                   <Text style={styles.phaseStatValue}>{avgKm}</Text>
-                  <Text style={styles.phaseStatLabel}>km/sett avg</Text>
+                  <Text style={styles.phaseStatLabel}>km/sett</Text>
                 </View>
                 <View style={styles.phaseStat}>
                   <Text style={[styles.phaseStatValue, { color: COLORS.lime }]}>{completedWeeks}/{p.count}</Text>
-                  <Text style={styles.phaseStatLabel}>completate</Text>
+                  <Text style={styles.phaseStatLabel}>fatte</Text>
                 </View>
               </View>
             </View>
@@ -287,7 +287,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl, alignItems: 'flex-end', gap: 2,
   },
   barColumn: { alignItems: 'center', width: BAR_WIDTH },
-  barKm: { fontSize: 8, color: COLORS.textMuted, marginBottom: 2 },
+  barKm: { fontSize: 9, color: COLORS.textMuted, marginBottom: 2, textAlign: 'center', width: BAR_WIDTH },
   barTrack: { justifyContent: 'flex-end', alignItems: 'center' },
   bar: {
     width: BAR_WIDTH - 4, borderRadius: 2, minHeight: 4,
@@ -317,8 +317,8 @@ const styles = StyleSheet.create({
   phaseDot: { width: 10, height: 10, borderRadius: 5 },
   phaseName: { fontSize: FONT_SIZES.body, color: COLORS.text, fontWeight: '700', flex: 1 },
   phaseWeekRange: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
-  phaseStats: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: SPACING.md },
-  phaseStat: { alignItems: 'center', width: '23%', marginBottom: SPACING.xs },
+  phaseStats: { flexDirection: 'row', marginTop: SPACING.md },
+  phaseStat: { flex: 1, alignItems: 'center' },
   phaseStatValue: { fontSize: FONT_SIZES.md, color: COLORS.text, fontWeight: '800' },
   phaseStatLabel: { fontSize: 9, color: COLORS.textMuted, marginTop: 2 },
 });

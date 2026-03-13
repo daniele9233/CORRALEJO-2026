@@ -1,15 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput,
-  TouchableOpacity, KeyboardAvoidingView, Platform,
+  TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../src/theme';
+import { api } from '../src/api';
 
 export default function CalcolatoreScreen() {
   const router = useRouter();
+
+  // VDOT state
+  const [vdotData, setVdotData] = useState<any>(null);
+  const [vdotLoading, setVdotLoading] = useState(true);
+
+  useEffect(() => {
+    api.getVdotPaces()
+      .then(setVdotData)
+      .catch(() => setVdotData(null))
+      .finally(() => setVdotLoading(false));
+  }, []);
+
   // PB Input
   const [pbDistance, setPbDistance] = useState('6');
   const [pbMinutes, setPbMinutes] = useState('29');
@@ -148,6 +161,67 @@ export default function CalcolatoreScreen() {
               <Text style={styles.pageTitle}>CALCOLATORE</Text>
               <Text style={styles.pageSubtitle}>PACE & RACE PREDICTOR</Text>
             </View>
+          </View>
+
+          {/* VDOT Training Paces Section */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="fitness" size={18} color={COLORS.lime} />
+              <Text style={styles.sectionTitle}>PASSI DA VDOT (DANIELS)</Text>
+            </View>
+
+            {vdotLoading ? (
+              <View style={styles.vdotCard}>
+                <ActivityIndicator color={COLORS.lime} />
+              </View>
+            ) : vdotData?.vdot ? (
+              <View style={styles.vdotCard}>
+                <View style={styles.vdotHeader}>
+                  <Text style={styles.vdotLabel}>IL TUO VDOT</Text>
+                  <Text style={styles.vdotValue}>{vdotData.vdot}</Text>
+                </View>
+                {vdotData.based_on ? (
+                  <Text style={styles.vdotBasis}>Basato su: {vdotData.based_on}</Text>
+                ) : null}
+
+                <View style={styles.vdotDivider} />
+
+                <Text style={styles.vdotPacesTitle}>PASSI DI ALLENAMENTO</Text>
+                <View style={styles.vdotPacesGrid}>
+                  {[
+                    { zone: 'Easy', key: 'easy', desc: 'Corsa lenta, lungo', color: '#22c55e' },
+                    { zone: 'Marathon', key: 'marathon', desc: 'Ritmo gara', color: '#3b82f6' },
+                    { zone: 'Threshold', key: 'threshold', desc: 'Soglia, progressivo', color: '#f59e0b' },
+                    { zone: 'Interval', key: 'interval', desc: 'Ripetute', color: '#ef4444' },
+                    { zone: 'Repetition', key: 'repetition', desc: 'Ripetute brevi', color: '#a855f7' },
+                  ].map(({ zone, key, desc, color }) => (
+                    <View key={key} style={styles.vdotPaceRow}>
+                      <View style={[styles.vdotZoneDot, { backgroundColor: color }]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.vdotZoneName}>{zone}</Text>
+                        <Text style={styles.vdotZoneDesc}>{desc}</Text>
+                      </View>
+                      <Text style={styles.vdotPaceValue}>
+                        {vdotData.paces?.[key] || '-'}/km
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={styles.vdotNote}>
+                  <Ionicons name="information-circle" size={14} color={COLORS.textMuted} />
+                  <Text style={styles.vdotNoteText}>
+                    Questi passi sono calcolati dal tuo VDOT con le formule di Jack Daniels e usati nel piano di allenamento.
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.vdotCard}>
+                <Text style={styles.vdotEmptyText}>
+                  Completa un test o una gara nel 2026 per calcolare il tuo VDOT e i passi di allenamento scientifici.
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* Race Predictor Section */}
@@ -477,4 +551,33 @@ const styles = StyleSheet.create({
   quickRefItem: { width: '23%', flexGrow: 1, alignItems: 'center', padding: SPACING.sm, backgroundColor: COLORS.bg, borderRadius: BORDER_RADIUS.sm },
   quickRefPace: { fontSize: FONT_SIZES.xs, color: COLORS.lime, fontWeight: '700' },
   quickRefSpeed: { fontSize: 10, color: COLORS.textMuted },
+
+  // VDOT styles
+  vdotCard: {
+    marginHorizontal: SPACING.xl, backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg, padding: SPACING.lg,
+    borderWidth: 1, borderColor: 'rgba(190, 242, 100, 0.2)',
+  },
+  vdotHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  vdotLabel: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 1 },
+  vdotValue: { fontSize: 36, color: COLORS.lime, fontWeight: '900' },
+  vdotBasis: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, marginTop: 4 },
+  vdotDivider: { height: 1, backgroundColor: COLORS.cardBorder, marginVertical: SPACING.md },
+  vdotPacesTitle: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 1, marginBottom: SPACING.sm },
+  vdotPacesGrid: { gap: SPACING.sm },
+  vdotPaceRow: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
+    backgroundColor: COLORS.bg, borderRadius: BORDER_RADIUS.md, padding: SPACING.md,
+  },
+  vdotZoneDot: { width: 10, height: 10, borderRadius: 5 },
+  vdotZoneName: { fontSize: FONT_SIZES.sm, color: COLORS.text, fontWeight: '700' },
+  vdotZoneDesc: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
+  vdotPaceValue: { fontSize: FONT_SIZES.lg, color: COLORS.text, fontWeight: '900' },
+  vdotNote: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    marginTop: SPACING.md, paddingTop: SPACING.md,
+    borderTopWidth: 1, borderTopColor: COLORS.cardBorder,
+  },
+  vdotNoteText: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, flex: 1, lineHeight: 16 },
+  vdotEmptyText: { fontSize: FONT_SIZES.sm, color: COLORS.textMuted, textAlign: 'center', paddingVertical: SPACING.lg },
 });
