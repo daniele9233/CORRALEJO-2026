@@ -108,6 +108,184 @@ def _pace_to_seconds(pace_str: str) -> int:
     except (ValueError, IndexError):
         return 0
 
+def _generate_enhanced_analysis(run, planned_session, planned_week, profile=None, vdot=None, vdot_paces=None, recent_runs=None):
+    """Generate a detailed coach-style analysis without AI."""
+    lines = []
+    run_type = run.get('run_type', 'unknown')
+    dist = run.get('distance_km', 0) or 0
+    pace = run.get('avg_pace', '')
+    avg_hr = run.get('avg_hr', 0) or 0
+    max_hr = run.get('max_hr', 0) or 0
+    duration = run.get('duration_minutes', 0) or 0
+    max_hr_profile = profile.get('max_hr', 180) if profile else 180
+
+    # Calculate HR percentages
+    hr_pct = round(avg_hr / max_hr_profile * 100) if avg_hr and max_hr_profile else 0
+    max_hr_pct = round(max_hr / max_hr_profile * 100) if max_hr and max_hr_profile else 0
+
+    # Determine HR zone
+    hr_zone = "N/D"
+    if avg_hr:
+        if avg_hr <= 117: hr_zone = "Z1 (Recupero)"
+        elif avg_hr <= 146: hr_zone = "Z2 (Resistenza)"
+        elif avg_hr <= 160: hr_zone = "Z3 (Ritmo)"
+        elif avg_hr <= 175: hr_zone = "Z4 (Soglia)"
+        else: hr_zone = "Z5 (Anaerobico)"
+
+    if planned_session:
+        # ===== CORSA PIANIFICATA =====
+        planned_type = planned_session.get('type', '')
+        target_dist = planned_session.get('target_distance_km', 0) or 0
+        target_pace = planned_session.get('target_pace', '')
+
+        lines.append("📊 **VERDETTO:** ")
+
+        # Distance check
+        dist_ok = True
+        if target_dist > 0 and dist > 0:
+            dist_diff_pct = round((dist - target_dist) / target_dist * 100, 1)
+            if abs(dist_diff_pct) <= 15:
+                dist_ok = True
+            else:
+                dist_ok = False
+
+        # Pace check
+        pace_ok = True
+        t_secs = _pace_to_seconds(target_pace)
+        a_secs = _pace_to_seconds(pace)
+        pace_diff = 0
+        if t_secs > 0 and a_secs > 0:
+            pace_diff = a_secs - t_secs
+            if abs(pace_diff) <= 15:
+                pace_ok = True
+            else:
+                pace_ok = False
+
+        # HR zone check for session type
+        hr_ok = True
+        expected_zone = SESSION_TYPE_HR_ZONES.get(planned_type, {})
+        if avg_hr and expected_zone:
+            if avg_hr < expected_zone.get('min_hr', 0) - 10:
+                hr_ok = False  # too low
+            elif avg_hr > expected_zone.get('max_hr', 200) + 10:
+                hr_ok = False  # too high
+
+        if dist_ok and pace_ok and hr_ok:
+            lines[0] += "Allenamento centrato ✅"
+        elif pace_diff < -20:
+            lines[0] += "Troppo intenso ⚠️"
+        elif pace_diff > 20:
+            lines[0] += "Troppo blando ⚠️"
+        else:
+            lines[0] += "Deviazione dal piano ⚠️"
+
+        lines.append("")
+        lines.append("📋 **PIANO VS REALTÀ:**")
+        if target_dist > 0:
+            dist_diff_pct = round((dist - target_dist) / target_dist * 100, 1)
+            lines.append(f"- Distanza: {dist}km vs {target_dist}km target ({'+' if dist_diff_pct > 0 else ''}{dist_diff_pct}%)")
+        if target_pace:
+            if pace_diff != 0:
+                direction = "più lento" if pace_diff > 0 else "più veloce"
+                lines.append(f"- Passo: {pace}/km vs {target_pace}/km target ({abs(pace_diff)}s/km {direction})")
+            else:
+                lines.append(f"- Passo: {pace}/km vs {target_pace}/km target")
+        if avg_hr and expected_zone:
+            zone_name = expected_zone.get('zone', '?')
+            lines.append(f"- FC media: {avg_hr} bpm ({hr_pct}% FCmax) — Zona attesa: {zone_name} ({expected_zone.get('min_hr')}-{expected_zone.get('max_hr')} bpm)")
+
+        lines.append("")
+        lines.append("💪 **PUNTI POSITIVI:**")
+        if dist_ok:
+            lines.append("- Distanza centrata rispetto al piano")
+        if pace_ok and pace:
+            lines.append("- Passo coerente con l'obiettivo della sessione")
+        if hr_ok and avg_hr:
+            lines.append("- Frequenza cardiaca nella zona corretta")
+        if duration > 30:
+            lines.append(f"- Buon volume di lavoro ({round(duration)} minuti)")
+
+        lines.append("")
+        lines.append("⚠️ **ATTENZIONE:**")
+        if not pace_ok and pace_diff < -15:
+            lines.append("- Attenzione a non esagerare con l'intensità. Corri troppo forte rischi overtraining.")
+        elif not pace_ok and pace_diff > 15:
+            lines.append("- Il passo è più lento del target. Assicurati di non trascinarti.")
+        if not hr_ok and avg_hr and expected_zone:
+            if avg_hr > expected_zone.get('max_hr', 200):
+                lines.append(f"- FC troppo alta per questo tipo di sessione ({planned_type}). Rischio sovraccarico.")
+            else:
+                lines.append(f"- FC più bassa del previsto. Potrebbe indicare scarsa intensità o buon adattamento.")
+        if not dist_ok and target_dist > 0:
+            if dist < target_dist:
+                lines.append(f"- Hai tagliato {round(target_dist - dist, 1)}km. Completa la distanza per ottenere l'adattamento previsto.")
+        if dist_ok and pace_ok and hr_ok:
+            lines.append("- Nessun punto critico. Ottimo lavoro!")
+
+    else:
+        # ===== CORSA EXTRA =====
+        lines.append("📊 **VERDETTO:** Corsa extra fuori dal piano")
+        lines.append("")
+        lines.append("📋 **ANALISI CORSA:**")
+        lines.append(f"- Distanza: {dist}km in {round(duration)} minuti")
+        lines.append(f"- Passo medio: {pace}/km")
+        if avg_hr:
+            lines.append(f"- FC media: {avg_hr} bpm ({hr_pct}% FCmax) — Zona: {hr_zone}")
+        if max_hr:
+            lines.append(f"- FC max: {max_hr} bpm ({max_hr_pct}% FCmax)")
+
+        lines.append("")
+        lines.append("💪 **VALUTAZIONE:**")
+
+        # Check pace vs VDOT zones
+        if vdot_paces and pace:
+            a_secs = _pace_to_seconds(pace)
+            easy_secs = _pace_to_seconds(vdot_paces.get('easy', ''))
+            tempo_secs = _pace_to_seconds(vdot_paces.get('threshold', ''))
+            interval_secs = _pace_to_seconds(vdot_paces.get('interval', ''))
+
+            if a_secs > 0 and easy_secs > 0:
+                if a_secs >= easy_secs - 10:
+                    lines.append(f"- Passo da corsa lenta (Easy: {vdot_paces.get('easy')}/km). ✅ Buona zona aerobica.")
+                    if avg_hr and avg_hr > 146:
+                        lines.append("- ⚠️ Ma la FC è troppo alta per un lento. Rallenta o controlla lo stress.")
+                elif tempo_secs > 0 and a_secs >= tempo_secs - 10:
+                    lines.append(f"- Passo da ritmo soglia (Threshold: {vdot_paces.get('threshold')}/km).")
+                    if avg_hr and avg_hr < 155:
+                        lines.append("- ✅ FC coerente con la soglia anaerobica.")
+                    elif avg_hr and avg_hr > 175:
+                        lines.append("- ⚠️ FC molto alta. Stai spingendo più della soglia.")
+                elif interval_secs > 0 and a_secs <= interval_secs + 10:
+                    lines.append(f"- Passo veloce, zona interval (Interval: {vdot_paces.get('interval')}/km).")
+                else:
+                    lines.append(f"- Passo intermedio tra easy e soglia.")
+
+        if dist < 3:
+            lines.append("- Corsa breve. Va bene per defaticamento o riscaldamento.")
+        elif dist >= 10:
+            lines.append("- Buon volume di corsa. Attento al recupero nei prossimi giorni.")
+
+        lines.append("")
+        lines.append("⚠️ **NOTE:**")
+        lines.append("- Questa corsa non era nel piano. Assicurati di non accumulare troppo volume non pianificato.")
+        if avg_hr and avg_hr > 160:
+            lines.append("- FC elevata. Se non era una sessione di qualità, stai attento a non esagerare.")
+
+    # Common section
+    lines.append("")
+    lines.append("🎯 **PROSSIMA SESSIONE:**")
+    if planned_week:
+        phase = planned_week.get('phase', '')
+        lines.append(f"- Fase attuale: {phase} — Settimana {planned_week.get('week_number', '?')}")
+        if planned_week.get('is_recovery_week'):
+            lines.append("- Settimana di scarico: mantieni i ritmi bassi e recupera.")
+        lines.append("- Segui il piano della prossima sessione per costruire progressivamente la base.")
+    else:
+        lines.append("- Continua con il piano di allenamento previsto. Non saltare le sessioni di recupero.")
+
+    return "\n".join(lines)
+
+
 def _generate_basic_analysis(run, planned_session, planned_week):
     """Generate a basic run analysis without AI."""
     lines = [f"**Analisi corsa del {run.get('date', 'N/D')}**\n"]
@@ -1004,13 +1182,13 @@ CONTESTO SETTIMANA:
                 f"a {r.get('avg_pace')}/km, FC {r.get('avg_hr', 'N/D')}bpm"
             )
 
+    response = None
+
+    # Try Claude AI first
     try:
         import anthropic
         ai_key = os.environ.get('ANTHROPIC_API_KEY', '')
-        if not ai_key:
-            # Fallback: generate a basic analysis without AI
-            response = _generate_basic_analysis(run, planned_session, planned_week)
-        else:
+        if ai_key:
             client_ai = anthropic.AsyncAnthropic(api_key=ai_key)
             result = await client_ai.messages.create(
                 model="claude-3-5-sonnet-20241022",
@@ -1021,19 +1199,22 @@ CONTESTO SETTIMANA:
                 ],
             )
             response = result.content[0].text
-
-        analysis_doc = {
-            "id": make_id(),
-            "run_id": req.run_id,
-            "analysis": response,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
-        await db.ai_analyses.insert_one(analysis_doc)
-        analysis_doc.pop("_id", None)
-        return analysis_doc
     except Exception as e:
-        logger.error(f"AI Analysis error: {e}")
-        raise HTTPException(500, f"Errore nell'analisi AI: {str(e)}")
+        logger.warning(f"Claude AI unavailable, using enhanced analysis: {e}")
+
+    # Fallback: enhanced analysis without AI
+    if not response:
+        response = _generate_enhanced_analysis(run, planned_session, planned_week, profile, vdot_val, vdot_paces, recent_runs)
+
+    analysis_doc = {
+        "id": make_id(),
+        "run_id": req.run_id,
+        "analysis": response,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.ai_analyses.insert_one(analysis_doc)
+    analysis_doc.pop("_id", None)
+    return analysis_doc
 
 @api_router.get("/tests")
 async def get_tests():
