@@ -56,4 +56,6 @@ export const api = {
   registerPushToken: (token: string) =>
     apiFetch('/push-token', { method: 'POST', body: JSON.stringify({ token }) }),
   getInjuryRisk: () => apiFetch('/injury-risk'),
+  getWeeklyReport: () => apiFetch('/weekly-report'),
+  sendWeeklyReport: () => apiFetch('/weekly-report/send', { method: 'POST' }),
 };

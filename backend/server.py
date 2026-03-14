@@ -1319,6 +1319,211 @@ async def send_push_notification(title: str, body: str):
         logger.error(f"Push notification error: {e}")
 
 
+async def generate_weekly_report() -> dict:
+    """Generate weekly training report data.
+    Compares completed week vs plan targets, tracks VDOT trend,
+    and previews next week."""
+    today = date.today()
+    profile = await db.profile.find_one({}, {"_id": 0}) or {}
+    current_vdot = profile.get("current_vdot")
+
+    # Find the week that just ended (last Monday to Sunday)
+    last_monday = today - timedelta(days=today.weekday() + 7)
+    last_sunday = last_monday + timedelta(days=6)
+
+    # Get completed week from plan
+    completed_week = await db.training_plan.find_one(
+        {"week_start": {"$gte": last_monday.isoformat(), "$lte": last_sunday.isoformat()}},
+        {"_id": 0}
+    )
+    if not completed_week:
+        # Try to find any week that overlaps
+        all_weeks = await db.training_plan.find({}, {"_id": 0}).to_list(200)
+        for w in all_weeks:
+            ws = w.get("week_start", "")
+            if last_monday.isoformat() <= ws <= last_sunday.isoformat():
+                completed_week = w
+                break
+
+    # Get actual runs for that week
+    runs = await db.runs.find(
+        {"date": {"$gte": last_monday.isoformat(), "$lte": last_sunday.isoformat()}},
+        {"_id": 0}
+    ).to_list(50)
+
+    actual_km = round(sum(r.get("distance_km", 0) for r in runs), 1)
+    actual_runs_count = len(runs)
+    target_km = completed_week.get("target_km", 0) if completed_week else 0
+    phase = completed_week.get("phase", "?") if completed_week else "?"
+    week_num = completed_week.get("week_number", "?") if completed_week else "?"
+
+    # Adherence: sessions completed vs total
+    total_sessions = 0
+    completed_sessions = 0
+    if completed_week:
+        sessions = completed_week.get("sessions", [])
+        total_sessions = len([s for s in sessions if s.get("type") not in ("riposo",)])
+        completed_sessions = len([s for s in sessions if s.get("completed")])
+
+    adherence_pct = round(completed_sessions / total_sessions * 100) if total_sessions > 0 else 0
+    km_pct = round(actual_km / target_km * 100) if target_km > 0 else 0
+
+    # Average pace and HR
+    paces = []
+    hrs = []
+    for r in runs:
+        p = r.get("avg_pace", "")
+        if p and ":" in p:
+            parts = p.split(":")
+            try:
+                paces.append(int(parts[0]) * 60 + int(parts[1]))
+            except ValueError:
+                pass
+        if r.get("avg_hr"):
+            hrs.append(r["avg_hr"])
+
+    avg_pace_str = ""
+    if paces:
+        avg_secs = sum(paces) / len(paces)
+        avg_pace_str = f"{int(avg_secs)//60}:{int(avg_secs)%60:02d}/km"
+
+    avg_hr = round(sum(hrs) / len(hrs)) if hrs else None
+
+    # VDOT history — check change from last week
+    vdot_history = await db.vo2max_history.find(
+        {}, {"_id": 0}
+    ).sort("date", -1).to_list(5)
+    vdot_change = None
+    if len(vdot_history) >= 2:
+        vdot_change = round(vdot_history[0].get("vdot", 0) - vdot_history[1].get("vdot", 0), 1)
+
+    # Next week preview
+    next_monday = today - timedelta(days=today.weekday())
+    next_sunday = next_monday + timedelta(days=6)
+    next_week = await db.training_plan.find_one(
+        {"week_start": {"$gte": next_monday.isoformat(), "$lte": next_sunday.isoformat()}},
+        {"_id": 0}
+    )
+    if not next_week:
+        all_weeks = await db.training_plan.find({}, {"_id": 0}).to_list(200)
+        for w in all_weeks:
+            ws = w.get("week_start", "")
+            if next_monday.isoformat() <= ws <= next_sunday.isoformat():
+                next_week = w
+                break
+
+    next_week_km = next_week.get("target_km", 0) if next_week else 0
+    next_week_phase = next_week.get("phase", "?") if next_week else "?"
+    next_week_sessions = []
+    if next_week:
+        for s in next_week.get("sessions", []):
+            if s.get("type") not in ("riposo",):
+                next_week_sessions.append(f"{s.get('title', s.get('type', '?'))}")
+
+    # Race countdown
+    race_date = date(2026, 12, 12)
+    days_to_race = (race_date - today).days
+
+    return {
+        "week_number": week_num,
+        "phase": phase,
+        "actual_km": actual_km,
+        "target_km": target_km,
+        "km_pct": km_pct,
+        "actual_runs": actual_runs_count,
+        "completed_sessions": completed_sessions,
+        "total_sessions": total_sessions,
+        "adherence_pct": adherence_pct,
+        "avg_pace": avg_pace_str,
+        "avg_hr": avg_hr,
+        "vdot": current_vdot,
+        "vdot_change": vdot_change,
+        "next_week_km": next_week_km,
+        "next_week_phase": next_week_phase,
+        "next_week_sessions": next_week_sessions,
+        "days_to_race": days_to_race,
+    }
+
+
+@api_router.get("/weekly-report")
+async def get_weekly_report():
+    """Get weekly training report data."""
+    return await generate_weekly_report()
+
+
+@api_router.post("/weekly-report/send")
+async def send_weekly_report():
+    """Generate and send weekly report via push notification."""
+    report = await generate_weekly_report()
+
+    # Build notification message
+    lines = []
+    lines.append(f"Settimana {report['week_number']} — {report['phase']}")
+    lines.append(f"KM: {report['actual_km']}/{report['target_km']} ({report['km_pct']}%)")
+    lines.append(f"Aderenza: {report['adherence_pct']}% ({report['completed_sessions']}/{report['total_sessions']} sessioni)")
+
+    if report['avg_pace']:
+        lines.append(f"Passo medio: {report['avg_pace']}")
+    if report['avg_hr']:
+        lines.append(f"FC media: {report['avg_hr']} bpm")
+
+    if report['vdot']:
+        vdot_str = f"VDOT: {report['vdot']}"
+        if report['vdot_change'] and report['vdot_change'] != 0:
+            sign = "+" if report['vdot_change'] > 0 else ""
+            vdot_str += f" ({sign}{report['vdot_change']})"
+        lines.append(vdot_str)
+
+    lines.append(f"Prossima: {report['next_week_phase']} — {report['next_week_km']}km")
+    lines.append(f"Gara tra {report['days_to_race']} giorni")
+
+    title = f"Report Sett. {report['week_number']}: {report['actual_km']}km ({report['adherence_pct']}%)"
+    body = "\n".join(lines)
+
+    await send_push_notification(title, body)
+
+    # Save report to DB for history
+    await db.weekly_reports.insert_one({
+        "id": str(uuid.uuid4()),
+        "date": date.today().isoformat(),
+        **report,
+        "sent": True,
+    })
+
+    return {"sent": True, "title": title, "body": body, "report": report}
+
+
+# ══════════════════════════════════════════════════════════════════
+# BACKGROUND SCHEDULER — Weekly Report (every Sunday 20:00 UTC)
+# ══════════════════════════════════════════════════════════════════
+import asyncio
+
+_weekly_report_task = None
+
+async def _weekly_report_scheduler():
+    """Background task: sends weekly report every Sunday at 20:00 UTC."""
+    while True:
+        now = datetime.now(timezone.utc)
+        # Calculate seconds until next Sunday 20:00 UTC
+        days_ahead = 6 - now.weekday()  # 6 = Sunday
+        if days_ahead < 0 or (days_ahead == 0 and now.hour >= 20):
+            days_ahead += 7
+        next_sunday = now.replace(hour=20, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
+        wait_seconds = (next_sunday - now).total_seconds()
+        logger.info(f"Weekly report scheduler: next report in {wait_seconds/3600:.1f} hours ({next_sunday.isoformat()})")
+        await asyncio.sleep(wait_seconds)
+        try:
+            report = await generate_weekly_report()
+            # Only send if there was actual training data
+            if report["actual_runs"] > 0:
+                await send_weekly_report()
+                logger.info(f"Weekly report sent: {report['actual_km']}km, {report['adherence_pct']}% adherence")
+            else:
+                logger.info("Weekly report skipped: no runs this week")
+        except Exception as e:
+            logger.error(f"Weekly report error: {e}")
+
+
 @api_router.get("/analytics")
 async def get_analytics():
     """Comprehensive analytics: VO2max, race predictions, pace/HR trends, zone distribution, goal gap"""
@@ -3369,6 +3574,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def startup_scheduler():
+    global _weekly_report_task
+    _weekly_report_task = asyncio.create_task(_weekly_report_scheduler())
+    logger.info("Weekly report scheduler started")
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    global _weekly_report_task
+    if _weekly_report_task:
+        _weekly_report_task.cancel()
     client.close()

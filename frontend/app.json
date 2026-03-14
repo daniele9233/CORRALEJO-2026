@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "Corralejo 2026",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,6 +8,15 @@
     "scheme": "corralejo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b6eee442-2a97-4b31-803f-21db08504ca3",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 5000
+    },
     "ios": {
       "supportsTablet": true
     },

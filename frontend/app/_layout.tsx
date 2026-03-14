@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import * as Updates from 'expo-updates';
 import { COLORS } from '../src/theme';
 import { api } from '../src/api';
 
@@ -42,9 +43,27 @@ async function registerForPushNotifications() {
   }
 }
 
+async function checkForOTAUpdate() {
+  if (__DEV__) return; // Skip in development
+  try {
+    const update = await Updates.checkForUpdateAsync();
+    if (update.isAvailable) {
+      await Updates.fetchUpdateAsync();
+      Alert.alert(
+        'Aggiornamento disponibile',
+        "L'app è stata aggiornata. Riavvio in corso...",
+        [{ text: 'OK', onPress: () => Updates.reloadAsync() }]
+      );
+    }
+  } catch (e) {
+    console.log('OTA update check failed:', e);
+  }
+}
+
 export default function RootLayout() {
   useEffect(() => {
     registerForPushNotifications();
+    checkForOTAUpdate();
   }, []);
 
   return (
