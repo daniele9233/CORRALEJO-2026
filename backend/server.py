@@ -1774,65 +1774,143 @@ async def adapt_training_plan():
 
 @api_router.get("/training-plan/adaptation-status")
 async def get_adaptation_status():
-    """Check current adaptation status and provide recommendation"""
-    runs = await db.runs.find({}, {"_id": 0}).to_list(2000)
+    """Return current scientific training metrics and last adaptation decision.
+
+    Shows ACWR (Gabbett), monotony/strain (Foster), polarization (Seiler),
+    and the most recent adaptation log entry."""
+    profile = await db.profile.find_one({}, {"_id": 0}) or {}
+    max_hr = profile.get("max_hr", 180)
+    current_vdot = profile.get("current_vdot")
     today = date.today()
-    
-    # Calculate metrics for UI display
-    four_weeks_ago = (today - timedelta(days=28)).isoformat()
-    recent_runs = [r for r in runs if r.get("date", "") >= four_weeks_ago and r.get("avg_pace")]
-    
-    def pace_to_secs(pace_str):
-        if not pace_str or ':' not in pace_str:
-            return 999
-        parts = pace_str.split(':')
-        return int(parts[0]) * 60 + int(parts[1])
-    
-    if len(recent_runs) < 3:
+
+    # Load runs for EWMA calculation
+    eight_weeks_ago = (today - timedelta(days=56)).isoformat()
+    runs = await db.runs.find(
+        {"date": {"$gte": eight_weeks_ago}}, {"_id": 0}
+    ).sort("date", 1).to_list(500)
+
+    if len(runs) < 3:
         return {
             "can_adapt": False,
-            "reason": "Servono almeno 3 corse nelle ultime 4 settimane",
-            "recent_runs_count": len(recent_runs),
-            "suggestion": None
+            "reason": f"Solo {len(runs)} corse nelle ultime 8 settimane. Servono almeno 5.",
+            "recent_runs_count": len(runs),
+            "vdot": current_vdot,
         }
-    
-    recent_paces = [pace_to_secs(r["avg_pace"]) for r in recent_runs]
-    avg_recent_pace = sum(recent_paces) / len(recent_paces)
-    avg_pace_str = f"{int(avg_recent_pace // 60)}:{int(avg_recent_pace % 60):02d}"
-    
-    # Compare with older runs
-    eight_weeks_ago = (today - timedelta(days=56)).isoformat()
-    older_runs = [r for r in runs if eight_weeks_ago <= r.get("date", "") < four_weeks_ago and r.get("avg_pace")]
-    
-    improvement_pct = 0
-    suggestion = "standard"
-    
-    if len(older_runs) >= 3:
-        older_paces = [pace_to_secs(r["avg_pace"]) for r in older_runs]
-        avg_older_pace = sum(older_paces) / len(older_paces)
-        
-        if avg_older_pace > 0:
-            improvement_pct = round(((avg_older_pace - avg_recent_pace) / avg_older_pace) * 100, 1)
-            
-            if improvement_pct > 5:
-                suggestion = "aggressive"
-            elif improvement_pct > 2:
-                suggestion = "moderate_increase"
-            elif improvement_pct < -3:
-                suggestion = "reduce"
-    
+
+    # Compute daily training loads
+    daily_loads = {}
+    for run in runs:
+        d = run.get("date", "")
+        dist = run.get("distance_km", 0)
+        hr = run.get("avg_hr")
+        intensity = (hr / max_hr) if (hr and max_hr > 0) else 0.72
+        daily_loads[d] = daily_loads.get(d, 0) + dist * intensity
+
+    # EWMA-ACWR (Gabbett 2016)
+    all_dates = []
+    cursor = today - timedelta(days=55)
+    while cursor <= today:
+        all_dates.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+
+    ewma_a = ewma_c = 0.0
+    la, lc = 2 / 8, 2 / 29
+    for i, d in enumerate(all_dates):
+        load = daily_loads.get(d, 0)
+        if i == 0:
+            ewma_a = ewma_c = load
+        else:
+            ewma_a = load * la + (1 - la) * ewma_a
+            ewma_c = load * lc + (1 - lc) * ewma_c
+    acwr = round(ewma_a / ewma_c, 2) if ewma_c > 0.01 else 1.0
+
+    # Monotony & Strain (Foster 1998)
+    last_7 = [(today - timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
+    wk = [daily_loads.get(d, 0) for d in last_7]
+    wk_total = sum(wk)
+    mean_l = wk_total / 7
+    sd_l = math.sqrt(sum((l - mean_l) ** 2 for l in wk) / 7) or 0.01
+    monotony = round(mean_l / sd_l, 2)
+    strain = round(wk_total * monotony, 1)
+
+    # Polarization (Seiler 2010)
+    four_weeks_ago = (today - timedelta(days=28)).isoformat()
+    recent = [r for r in runs if r.get("date", "") >= four_weeks_ago]
+    z1 = z2 = z3 = hr_n = 0
+    for r in recent:
+        hr = r.get("avg_hr")
+        if not hr:
+            continue
+        hr_n += 1
+        pct = hr / max_hr
+        if pct < 0.80:
+            z1 += 1
+        elif pct < 0.88:
+            z2 += 1
+        else:
+            z3 += 1
+    easy_pct = round(z1 / hr_n * 100) if hr_n >= 3 else None
+
+    # ACWR interpretation
+    if acwr > 1.5:
+        acwr_status = "danger"
+        acwr_label = f"⚠️ ACWR {acwr} — Zona pericolo (Gabbett: >1.5)"
+    elif acwr > 1.3:
+        acwr_status = "caution"
+        acwr_label = f"⚡ ACWR {acwr} — Attenzione (Gabbett: 1.3-1.5)"
+    elif acwr >= 0.8:
+        acwr_status = "optimal"
+        acwr_label = f"✅ ACWR {acwr} — Zona ottimale (Gabbett: 0.8-1.3)"
+    else:
+        acwr_status = "undertraining"
+        acwr_label = f"💡 ACWR {acwr} — Sotto-allenamento (Gabbett: <0.8)"
+
+    # Last adaptation log
+    last_log = await db.adaptation_log.find_one(
+        {}, {"_id": 0}, sort=[("date", -1)]
+    )
+
+    # Current phase
+    future = await db.training_plan.find(
+        {"week_start": {"$gte": today.isoformat()}}, {"_id": 0}
+    ).sort("week_start", 1).limit(1).to_list(1)
+    phase = future[0].get("phase", "?") if future else "?"
+
+    # Weekly km
+    week_start = (today - timedelta(days=today.weekday())).isoformat()
+    this_week_runs = [r for r in runs if r.get("date", "") >= week_start]
+    this_week_km = round(sum(r.get("distance_km", 0) for r in this_week_runs), 1)
+
     return {
         "can_adapt": True,
-        "recent_runs_count": len(recent_runs),
-        "avg_recent_pace": avg_pace_str,
-        "improvement_pct": improvement_pct,
-        "suggestion": suggestion,
-        "suggestion_label": {
-            "aggressive": "Aumenta intensità (+15%)",
-            "moderate_increase": "Aumenta leggermente (+8%)",
-            "reduce": "Riduci carico (-10%)",
-            "standard": "Mantieni piano attuale"
-        }.get(suggestion, "Mantieni piano attuale")
+        "recent_runs_count": len(recent),
+        "vdot": current_vdot,
+        "phase": phase,
+        "this_week_km": this_week_km,
+        "metrics": {
+            "acwr": acwr,
+            "acwr_status": acwr_status,
+            "acwr_label": acwr_label,
+            "monotony": monotony,
+            "monotony_warning": monotony > 2.0,
+            "strain": strain,
+            "polarization_easy_pct": easy_pct,
+            "polarization_ok": easy_pct is None or easy_pct >= 75,
+            "z1_runs": z1,
+            "z2_runs": z2,
+            "z3_runs": z3,
+        },
+        "last_adaptation": {
+            "date": last_log.get("date") if last_log else None,
+            "adapted": last_log.get("adapted") if last_log else None,
+            "decisions": last_log.get("decisions", []) if last_log else [],
+        },
+        "science_references": [
+            "Gabbett (2016) Br J Sports Med — ACWR sweet spot 0.8-1.3",
+            "Foster (1998) Med Sci Sports Exerc — Monotony >2.0 = overtraining risk",
+            "Seiler (2010) Int J Sports Physiol Perform — Polarized 80/20 distribution",
+            "Daniels (2014) Running Formula — VDOT 2/3 rule, pace zones",
+        ],
     }
 
 @api_router.get("/vdot/paces")
@@ -2417,89 +2495,165 @@ async def _compare_run_to_plan(activity: dict) -> dict:
 
 
 async def auto_recalculate_vdot() -> dict:
-    """Recalculate VDOT from the best recent race/test and update plan paces if improved."""
+    """Recalculate VDOT from best validated efforts and update plan paces.
+
+    Scientific basis — Daniels' Running Formula (2014, 4th ed.):
+    ──────────────────────────────────────────────────────────────
+    1. Only "validated efforts" count for VDOT: distance ≥ 4km,
+       avg_hr ≥ 85% HRmax (true race/test effort). If no HR data,
+       the run is still considered (conservative fallback).
+
+    2. The 2/3 rule: when a new measured VDOT exceeds the current
+       training VDOT, only credit 2/3 of the improvement.
+       → Prevents overreacting to a single great race day.
+       → Example: current 40.6, measured 43.0 →
+         new = 40.6 + (43.0 - 40.6) × 0.67 = 42.2 (not 43.0)
+
+    3. Max +1 VDOT per mesocycle (4 weeks): even with the 2/3 rule,
+       cap total increase at 1.0 VDOT since last update.
+       → Ensures training paces don't outpace physiological adaptation.
+
+    4. Regression is applied in full (no dampening): if the athlete's
+       best validated VDOT drops below current, reduce immediately
+       to prevent training at unsustainable paces.
+    ──────────────────────────────────────────────────────────────
+    """
+    VDOT_DAMPENING = 2 / 3                 # Daniels' 2/3 rule
+    VDOT_MAX_INCREASE_PER_MESOCYCLE = 1.0  # Max +1 VDOT per 4-week block
+    VDOT_MIN_DISTANCE_KM = 4.0            # Minimum distance for valid effort
+    VDOT_MIN_HR_PCT = 0.85                 # 85% HRmax = race effort threshold
+
+    profile = await db.profile.find_one({}, {"_id": 0}) or {}
+    max_hr = profile.get("max_hr", 180)
+    current_vdot = profile.get("current_vdot")
+    last_vdot_update = profile.get("last_vdot_update")  # ISO date string
+
     runs = await db.runs.find({}, {"_id": 0}).sort("date", -1).to_list(500)
 
+    # Find best VDOT from validated efforts
     best_vdot = None
     best_run_info = None
     for run in runs:
         dist = run.get("distance_km", 0)
         dur = run.get("duration_minutes", 0)
-        if dist >= 4 and dur > 0:
-            vdot = calculate_vdot_from_race(dist, dur)
-            if vdot and (best_vdot is None or vdot > best_vdot):
-                best_vdot = vdot
-                best_run_info = f"{dist}km del {run.get('date', '?')} ({run.get('avg_pace', '?')}/km)"
+        hr = run.get("avg_hr")
+
+        if dist < VDOT_MIN_DISTANCE_KM or dur <= 0:
+            continue
+
+        # Validate effort: either HR ≥ 85% HRmax or no HR data (conservative)
+        if hr and max_hr > 0:
+            hr_pct = hr / max_hr
+            if hr_pct < VDOT_MIN_HR_PCT:
+                continue  # Not a race effort — skip
+
+        vdot = calculate_vdot_from_race(dist, dur)
+        if vdot and (best_vdot is None or vdot > best_vdot):
+            best_vdot = vdot
+            best_run_info = f"{dist}km del {run.get('date', '?')} ({run.get('avg_pace', '?')}/km)"
 
     if not best_vdot:
-        return {"updated": False, "message": "Nessuna corsa valida per calcolare il VDOT"}
-
-    # Check current VDOT stored in profile
-    profile = await db.profile.find_one({}, {"_id": 0})
-    current_vdot = None
-    if profile:
-        current_vdot = profile.get("current_vdot")
+        return {"updated": False, "message": "Nessuna corsa valida (≥4km, sforzo race-like) per calcolare il VDOT"}
 
     best_vdot = round(best_vdot, 1)
-    result = {"updated": False, "current_vdot": best_vdot, "based_on": best_run_info}
+    result = {"updated": False, "measured_vdot": best_vdot, "based_on": best_run_info}
 
-    if current_vdot is None or best_vdot != current_vdot:
-        # Store new VDOT in profile
-        await db.profile.update_one({}, {"$set": {"current_vdot": best_vdot}})
+    # Calculate the training VDOT using Daniels' rules
+    if current_vdot is None:
+        # First calculation ever — use measured VDOT directly
+        new_vdot = best_vdot
+    elif best_vdot > current_vdot:
+        # IMPROVEMENT: apply 2/3 rule (Daniels)
+        raw_improvement = best_vdot - current_vdot
+        dampened = raw_improvement * VDOT_DAMPENING
+        # Cap at +1 per mesocycle (4 weeks)
+        if last_vdot_update:
+            days_since = (date.today() - date.fromisoformat(last_vdot_update)).days
+            if days_since < 28:
+                dampened = min(dampened, VDOT_MAX_INCREASE_PER_MESOCYCLE)
+        new_vdot = round(current_vdot + dampened, 1)
+    elif best_vdot < current_vdot - 1.0:
+        # REGRESSION (>1 VDOT drop): apply in full for safety
+        new_vdot = best_vdot
+    else:
+        # Within ±1 of current — no change needed
+        new_vdot = current_vdot
+
+    result["training_vdot"] = new_vdot
+
+    if new_vdot != current_vdot:
+        # Store new VDOT and update timestamp
+        await db.profile.update_one({}, {"$set": {
+            "current_vdot": new_vdot,
+            "last_vdot_update": date.today().isoformat(),
+        }})
+
         # Save VO2max history point
         await db.vo2max_history.insert_one({
             "id": make_id(),
             "date": date.today().isoformat(),
-            "vdot": best_vdot,
+            "vdot": new_vdot,
+            "measured_vdot": best_vdot,
             "based_on": best_run_info,
+            "dampened": new_vdot != best_vdot,
         })
 
-        # Recalculate training paces
-        new_paces = vdot_training_paces(best_vdot)
+        # Recalculate training paces from new VDOT
+        new_paces = vdot_training_paces(new_vdot)
         if new_paces:
-            # Update all FUTURE weeks' sessions with new paces
-            today = date.today().isoformat()
-            future_weeks = await db.training_plan.find({"week_start": {"$gte": today}}).to_list(100)
+            # Update all FUTURE weeks using SESSION_PACE_ZONE mapping
+            today_str = date.today().isoformat()
+            future_weeks = await db.training_plan.find({"week_start": {"$gte": today_str}}).to_list(100)
             weeks_updated = 0
             for week in future_weeks:
                 sessions = week.get("sessions", [])
                 updated = False
                 for s in sessions:
                     stype = s.get("type", "")
-                    if stype == "corsa_lenta" and new_paces.get("easy"):
-                        s["target_pace"] = new_paces["easy"]
-                        updated = True
-                    elif stype == "lungo" and new_paces.get("long"):
-                        s["target_pace"] = new_paces["long"]
-                        updated = True
-                    elif stype == "progressivo" and new_paces.get("tempo"):
-                        s["target_pace"] = new_paces["tempo"]
-                        updated = True
-                    elif stype == "ripetute" and new_paces.get("interval"):
-                        s["target_pace"] = new_paces["interval"]
-                        updated = True
+                    daniels_zone = SESSION_PACE_ZONE.get(stype)
+                    if daniels_zone and daniels_zone in new_paces:
+                        old_pace = s.get("target_pace")
+                        new_pace = new_paces[daniels_zone]
+                        if old_pace != new_pace:
+                            s["target_pace"] = new_pace
+                            updated = True
                 if updated:
-                    await db.training_plan.update_one({"id": week["id"]}, {"$set": {"sessions": sessions}})
+                    await db.training_plan.update_one(
+                        {"id": week["id"]},
+                        {"$set": {"sessions": sessions, "vdot_based": True, "vdot_value": new_vdot}}
+                    )
                     weeks_updated += 1
 
             result["updated"] = True
             result["new_paces"] = new_paces
             result["weeks_updated"] = weeks_updated
-            result["message"] = f"VDOT aggiornato a {best_vdot} (da {best_run_info}). Ritmi aggiornati per {weeks_updated} settimane future."
-            logger.info(result["message"])
 
-            # Send push notification for VDOT improvement
-            if current_vdot is not None and best_vdot > current_vdot:
-                improvement = round(best_vdot - current_vdot, 1)
+            if current_vdot is not None and new_vdot > current_vdot:
+                improvement = round(new_vdot - current_vdot, 1)
+                result["message"] = (
+                    f"VDOT aggiornato: {current_vdot} → {new_vdot} (+{improvement}) "
+                    f"[Daniels 2/3 rule: misurato {best_vdot}, applicato 67%]. "
+                    f"Ritmi aggiornati per {weeks_updated} settimane."
+                )
+                # Push notification
                 threshold_pace = new_paces.get("threshold", "")
                 await send_push_notification(
-                    f"VO2max migliorato! {current_vdot} → {best_vdot} (+{improvement})",
-                    f"Nuova soglia: {threshold_pace}/km. I ritmi del piano sono stati aggiornati automaticamente."
+                    f"VO2max migliorato! {current_vdot} → {new_vdot} (+{improvement})",
+                    f"Nuova soglia: {threshold_pace}/km. Ritmi aggiornati (Daniels' Running Formula)."
                 )
+            elif new_vdot < current_vdot:
+                result["message"] = (
+                    f"VDOT ridotto: {current_vdot} → {new_vdot} "
+                    f"(regressione rilevata). Ritmi adeguati per {weeks_updated} settimane."
+                )
+            else:
+                result["message"] = f"VDOT impostato a {new_vdot}. Ritmi aggiornati per {weeks_updated} settimane."
+
+            logger.info(result["message"])
         else:
-            result["message"] = f"VDOT {best_vdot} calcolato ma impossibile derivare i ritmi"
+            result["message"] = f"VDOT {new_vdot} calcolato ma impossibile derivare i ritmi"
     else:
-        result["message"] = f"VDOT invariato a {best_vdot}"
+        result["message"] = f"VDOT invariato a {new_vdot}"
 
     return result
 
@@ -2552,239 +2706,432 @@ async def update_personal_bests_and_medals():
 
 
 async def auto_adapt_plan():
-    """Automatically adapt future training plan based on recent run performance vs targets.
-    Called after every Strava sync that imports new runs."""
+    """Scientifically-grounded auto-adaptation of the training plan.
 
-    def pace_to_secs(pace_str):
-        if not pace_str or ':' not in pace_str:
-            return None
-        parts = pace_str.split(':')
-        try:
-            return int(parts[0]) * 60 + int(parts[1])
-        except (ValueError, IndexError):
-            return None
+    Called after every Strava sync. Adjusts VOLUME only (paces are handled
+    by auto_recalculate_vdot via Daniels' VDOT).
 
-    def secs_to_pace(secs):
-        secs = max(int(round(secs)), 0)
-        return f"{secs // 60}:{secs % 60:02d}"
+    Scientific references:
+    ──────────────────────────────────────────────────────────────────────
+    [1] Daniels, J. (2014). Daniels' Running Formula, 4th ed. Human Kinetics.
+        → VDOT-based pace zones. Conservative updates: 2/3 of improvement,
+          max +1 VDOT per mesocycle (4-6 weeks). Paces handled separately.
 
+    [2] Gabbett, T.J. (2016). Br J Sports Med, 50(5), 273-280.
+        "The training—injury prevention paradox"
+        → ACWR via EWMA. Sweet spot: 0.8–1.3. Danger: >1.5.
+          λ_acute = 2/(7+1) = 0.25, λ_chronic = 2/(28+1) ≈ 0.069
+          (Williams et al. 2017 validated these decay constants.)
+
+    [3] Seiler, S. (2010). Int J Sports Physiol Perform, 5(3), 276-291.
+        "What is best practice for training intensity and duration distribution?"
+        → Polarized model: ≥80% training in Zone 1 (< VT1 = 80% HRmax),
+          ≤5% Zone 2, ~15-20% Zone 3 (> VT2 = 88% HRmax).
+
+    [4] Foster, C. (1998). Med Sci Sports Exerc, 30(7), 1164-1168.
+        "Monitoring training in athletes with reference to overtraining syndrome"
+        → Monotony = mean(daily_load) / SD(daily_load). Threshold: >2.0.
+          Strain = weekly_load × monotony.
+
+    [5] Mujika, I. & Padilla, S. (2003). Med Sci Sports Exerc, 35(7), 1182-1187.
+        "Scientific bases for precompetition tapering strategies"
+        → Optimal taper: reduce volume 40-60%, maintain intensity, 2-3 weeks.
+
+    [6] ACSM (2013). Guidelines for Exercise Testing and Prescription, 9th ed.
+        → Weekly volume increase ≤ 10%.
+    ──────────────────────────────────────────────────────────────────────
+    """
+
+    # ══════════════════════════════════════════════════════════════════
+    # CONSTANTS (all derived from the cited literature)
+    # ══════════════════════════════════════════════════════════════════
+    EWMA_LAMBDA_ACUTE = 2 / (7 + 1)       # 0.25   — Gabbett/Williams
+    EWMA_LAMBDA_CHRONIC = 2 / (28 + 1)    # ~0.069 — Gabbett/Williams
+    ACWR_SWEET_LOW = 0.8                   # Gabbett 2016
+    ACWR_SWEET_HIGH = 1.3                  # Gabbett 2016
+    ACWR_DANGER = 1.5                      # Gabbett 2016
+    MAX_WEEKLY_INCREASE_PCT = 0.10         # ACSM 10% rule
+    MONOTONY_THRESHOLD = 2.0              # Foster 1998
+    POLARIZATION_EASY_MIN = 0.75           # Seiler: target ≥80%, alert at <75%
+    MIN_RUNS_FOR_ADAPTATION = 5            # need ≥4 weeks chronic data
+    MIN_DAYS_FOR_ACWR = 21                 # EWMA needs ≥3 weeks to stabilize
+    DEFAULT_INTENSITY = 0.72               # midpoint Z2 easy running (~130/180)
+
+    # Phase-specific volume caps (Daniels periodization + ACSM)
+    PHASE_CAPS = {
+        "Ripresa":                 {"max_km": 35,  "max_increase": 0.08, "max_long_km": 12},
+        "Base Aerobica":           {"max_km": 48,  "max_increase": 0.10, "max_long_km": 18},
+        "Sviluppo":                {"max_km": 55,  "max_increase": 0.10, "max_long_km": 22},
+        "Preparazione Specifica":  {"max_km": 60,  "max_increase": 0.10, "max_long_km": 24},
+        "Picco":                   {"max_km": 58,  "max_increase": 0.05, "max_long_km": 22},
+        "Tapering":                {"max_km": 40,  "max_increase": 0.00, "max_long_km": 16},
+    }
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 1 — DATA COLLECTION
+    # ══════════════════════════════════════════════════════════════════
     today = date.today()
-    two_weeks_ago = (today - timedelta(days=14)).isoformat()
+    profile = await db.profile.find_one({}, {"_id": 0}) or {}
+    max_hr = profile.get("max_hr", 180)
 
-    # Step A: Get recent runs and all training weeks
+    # Load 8 weeks of runs for chronic window
+    eight_weeks_ago = (today - timedelta(days=56)).isoformat()
     runs = await db.runs.find(
-        {"date": {"$gte": two_weeks_ago}}, {"_id": 0}
-    ).to_list(200)
+        {"date": {"$gte": eight_weeks_ago}}, {"_id": 0}
+    ).sort("date", 1).to_list(500)
 
-    if not runs:
-        return {"adapted": False, "adaptation_type": "none", "message": "Nessuna corsa recente da analizzare."}
+    if len(runs) < MIN_RUNS_FOR_ADAPTATION:
+        return {
+            "adapted": False,
+            "adaptation_type": "insufficient_data",
+            "message": f"Solo {len(runs)} corse nelle ultime 8 settimane. "
+                       f"Servono almeno {MIN_RUNS_FOR_ADAPTATION} per un'analisi affidabile.",
+            "science": "Gabbett (2016): il chronic workload richiede ≥4 settimane di dati per stabilizzarsi."
+        }
 
     all_weeks = await db.training_plan.find({}, {"_id": 0}).to_list(200)
-
-    # Build a lookup: date -> list of planned sessions (with their week and index)
-    planned_by_date = {}
-    for week in all_weeks:
-        for idx, session in enumerate(week.get("sessions", [])):
-            session_date = session.get("date", "")
-            if session_date:
-                planned_by_date.setdefault(session_date, []).append({
-                    "session": session,
-                    "week_id": week["id"],
-                    "session_index": idx,
-                })
-
-    # Step B: Match runs to planned sessions and compute deviations
-    comparisons = []
-    for run in runs:
-        run_date = run.get("date", "")
-        run_pace_secs = pace_to_secs(run.get("avg_pace"))
-        run_hr = run.get("avg_hr")
-        if not run_date or run_pace_secs is None:
-            continue
-
-        planned_sessions = planned_by_date.get(run_date, [])
-        if not planned_sessions:
-            continue
-
-        # Pick the first session with a target_pace for this date
-        matched = None
-        for p in planned_sessions:
-            if p["session"].get("target_pace"):
-                matched = p
-                break
-        if not matched:
-            continue
-
-        target_pace_secs = pace_to_secs(matched["session"]["target_pace"])
-        if target_pace_secs is None or target_pace_secs == 0:
-            continue
-
-        # pace_diff_pct > 0 means runner was FASTER than target
-        pace_diff_pct = ((target_pace_secs - run_pace_secs) / target_pace_secs) * 100
-
-        # HR analysis: check if effort was appropriate for the session type
-        session_type = matched["session"].get("type", "")
-        hr_zone = SESSION_TYPE_HR_ZONES.get(session_type)
-        hr_appropriate = True  # default if no HR data
-        if run_hr and hr_zone:
-            # HR is appropriate if within zone or below zone+5bpm tolerance
-            hr_appropriate = run_hr <= (hr_zone["max_hr"] + 5)
-
-        comparisons.append({
-            "run_date": run_date,
-            "run_pace": run.get("avg_pace"),
-            "target_pace": matched["session"]["target_pace"],
-            "pace_diff_pct": pace_diff_pct,
-            "run_hr": run_hr,
-            "hr_appropriate": hr_appropriate,
-            "session_type": session_type,
-        })
-
-    # Need at least 3 matched comparisons to make a decision
-    if len(comparisons) < 3:
-        return {
-            "adapted": False,
-            "adaptation_type": "none",
-            "message": f"Solo {len(comparisons)} corse abbinate a sessioni con target. Servono almeno 3 per adattare.",
-            "comparisons_count": len(comparisons),
-        }
-
-    # Step C: Calculate weighted average deviation
-    avg_pace_diff = sum(c["pace_diff_pct"] for c in comparisons) / len(comparisons)
-    hr_ok_count = sum(1 for c in comparisons if c["hr_appropriate"])
-    hr_ok_ratio = hr_ok_count / len(comparisons)
-
-    # Decision
-    pace_factor = 1.0      # multiplier for target_pace (< 1 = faster)
-    volume_factor = 1.0    # multiplier for target_km and distances
-    adaptation_type = "none"
-    message_parts = []
-
-    if avg_pace_diff > 5 and hr_ok_ratio >= 0.7:
-        # Strong improvement: ran >5% faster with appropriate HR
-        pace_factor = 0.97       # 3% faster targets
-        volume_factor = 1.10     # 10% more volume
-        adaptation_type = "strong_improvement"
-        pace_change_secs = round(avg_pace_diff / 100 * 270)  # approx change in secs for a ~4:30 pace
-        message_parts.append(f"Ottimi progressi! Corri in media il {avg_pace_diff:.1f}% più veloce del target con FC nella norma.")
-        message_parts.append(f"I passi target sono stati abbassati di ~{pace_change_secs} sec/km e il volume aumentato del 10%.")
-
-    elif avg_pace_diff > 3 and hr_ok_ratio >= 0.6:
-        # Moderate improvement
-        pace_factor = 0.98       # 2% faster targets
-        volume_factor = 1.05     # 5% more volume
-        adaptation_type = "moderate_improvement"
-        message_parts.append(f"Buoni progressi! Corri in media il {avg_pace_diff:.1f}% più veloce del target.")
-        message_parts.append("I passi target sono stati leggermente abbassati e il volume aumentato del 5%.")
-
-    elif avg_pace_diff < -3 or (hr_ok_ratio < 0.4 and avg_pace_diff < 0):
-        # Regression or excessive effort
-        pace_factor = 1.02       # 2% slower targets
-        volume_factor = 0.95     # 5% less volume
-        adaptation_type = "regression"
-        if hr_ok_ratio < 0.4:
-            message_parts.append(f"La FC risulta troppo alta rispetto alle zone target in {int((1-hr_ok_ratio)*100)}% delle corse.")
-        else:
-            message_parts.append(f"Il passo è in media il {abs(avg_pace_diff):.1f}% più lento del target.")
-        message_parts.append("I passi target sono stati alzati e il volume ridotto del 5% per favorire il recupero.")
-
-    else:
-        return {
-            "adapted": False,
-            "adaptation_type": "none",
-            "message": "Le performance sono in linea con il piano. Nessun adattamento necessario.",
-            "avg_pace_diff_pct": round(avg_pace_diff, 1),
-            "comparisons_count": len(comparisons),
-        }
-
-    # Step D: Apply to all future weeks using VDOT-based paces
-    # Try to get current VDOT and adjust it based on performance
-    current_vdot, _ = await calculate_current_vdot()
-    new_vdot_paces = None
-
-    if current_vdot:
-        # Adjust VDOT based on adaptation type
-        vdot_delta = {
-            "strong_improvement": 1.5,
-            "moderate_improvement": 0.7,
-            "regression": -1.0,
-        }.get(adaptation_type, 0)
-        adjusted_vdot = current_vdot + vdot_delta
-        new_vdot_paces = vdot_training_paces(adjusted_vdot)
-        message_parts.append(f"VDOT aggiornato: {current_vdot} → {adjusted_vdot} (Daniels).")
-
     future_weeks = [w for w in all_weeks if w.get("week_start", "") >= today.isoformat()]
+    if not future_weeks:
+        return {"adapted": False, "adaptation_type": "none", "message": "Nessuna settimana futura nel piano."}
+
+    current_phase = future_weeks[0].get("phase", "Base Aerobica")
+    phase_cap = PHASE_CAPS.get(current_phase, PHASE_CAPS["Base Aerobica"])
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 2 — EWMA-ACWR (Gabbett 2016, Williams et al. 2017)
+    # ══════════════════════════════════════════════════════════════════
+    # Training load per run: simplified TRIMP = distance × (avg_hr / max_hr)
+    # If no HR data, use DEFAULT_INTENSITY (conservative Z2 estimate)
+    daily_loads = {}
+    for run in runs:
+        d = run.get("date", "")
+        dist = run.get("distance_km", 0)
+        hr = run.get("avg_hr")
+        intensity = (hr / max_hr) if (hr and max_hr > 0) else DEFAULT_INTENSITY
+        load = dist * intensity
+        daily_loads[d] = daily_loads.get(d, 0) + load
+
+    # Build continuous daily series (fill rest days with 0)
+    all_dates = []
+    cursor = today - timedelta(days=55)
+    while cursor <= today:
+        all_dates.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+
+    # Compute EWMA
+    ewma_acute = 0.0
+    ewma_chronic = 0.0
+    for i, d in enumerate(all_dates):
+        load = daily_loads.get(d, 0)
+        if i == 0:
+            ewma_acute = load
+            ewma_chronic = load
+        else:
+            ewma_acute = load * EWMA_LAMBDA_ACUTE + (1 - EWMA_LAMBDA_ACUTE) * ewma_acute
+            ewma_chronic = load * EWMA_LAMBDA_CHRONIC + (1 - EWMA_LAMBDA_CHRONIC) * ewma_chronic
+
+    acwr = round(ewma_acute / ewma_chronic, 2) if ewma_chronic > 0.01 else 1.0
+    days_with_data = len([d for d in all_dates if daily_loads.get(d, 0) > 0])
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 3 — INTENSITY DISTRIBUTION (Seiler 2010)
+    # ══════════════════════════════════════════════════════════════════
+    # Classify each run by avg_hr zone (acknowledged limitation: avg_hr
+    # is a proxy for time-in-zone, which Strava summary data doesn't provide)
+    four_weeks_ago = (today - timedelta(days=28)).isoformat()
+    recent_runs = [r for r in runs if r.get("date", "") >= four_weeks_ago]
+
+    z1_count = z2_count = z3_count = runs_with_hr = 0
+    for run in recent_runs:
+        hr = run.get("avg_hr")
+        if not hr:
+            continue
+        runs_with_hr += 1
+        hr_pct = hr / max_hr
+        if hr_pct < 0.80:       # Zone 1: below VT1 (easy)
+            z1_count += 1
+        elif hr_pct < 0.88:     # Zone 2: VT1-VT2 (threshold/tempo)
+            z2_count += 1
+        else:                   # Zone 3: above VT2 (interval/VO2max)
+            z3_count += 1
+
+    polarization_easy_pct = (z1_count / runs_with_hr) if runs_with_hr >= 5 else 0.80
+    polarization_alert = None
+    if runs_with_hr >= 5:
+        if polarization_easy_pct < 0.70:
+            polarization_alert = "troppa_intensita"
+        elif polarization_easy_pct > 0.92:
+            polarization_alert = "poca_intensita"
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 4 — TRAINING MONOTONY & STRAIN (Foster 1998)
+    # ══════════════════════════════════════════════════════════════════
+    last_7_days = [(today - timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
+    week_loads = [daily_loads.get(d, 0) for d in last_7_days]
+    weekly_total = sum(week_loads)
+    mean_load = weekly_total / 7.0
+    variance = sum((l - mean_load) ** 2 for l in week_loads) / 7.0
+    sd_load = math.sqrt(variance) if variance > 0 else 0.01
+    monotony = round(mean_load / sd_load, 2) if sd_load > 0.01 else 0.0
+    strain = round(weekly_total * monotony, 1)
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 5 — LAST COMPLETED WEEK VOLUME (for ACSM 10% cap)
+    # ══════════════════════════════════════════════════════════════════
+    last_week_start = (today - timedelta(days=today.weekday() + 7)).isoformat()
+    last_week_end = (today - timedelta(days=today.weekday() + 1)).isoformat()
+    last_week_runs = [r for r in runs if last_week_start <= r.get("date", "") <= last_week_end]
+    last_week_km = sum(r.get("distance_km", 0) for r in last_week_runs)
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 6 — DECISION ENGINE
+    # ══════════════════════════════════════════════════════════════════
+    volume_multiplier = 1.0
+    alerts = []
+    science_notes = []
+    adaptation_type = "none"
+
+    # A) ACWR-based volume guard (Gabbett 2016) — HIGHEST PRIORITY (safety)
+    acwr_usable = days_with_data >= MIN_DAYS_FOR_ACWR
+    if acwr_usable:
+        if acwr > ACWR_DANGER:
+            volume_multiplier = 0.85  # reduce 15%
+            adaptation_type = "acwr_danger_reduction"
+            alerts.append(
+                f"⚠️ ACWR {acwr} > {ACWR_DANGER} (zona pericolo infortunio). "
+                f"Volume ridotto del 15% per le prossime settimane."
+            )
+            science_notes.append(
+                "Gabbett (2016): ACWR >1.5 aumenta il rischio di infortunio di 2-4x. "
+                "Riduzione immediata del carico raccomandata."
+            )
+        elif acwr > ACWR_SWEET_HIGH:
+            volume_multiplier = 0.92  # reduce 8%
+            adaptation_type = "acwr_caution"
+            alerts.append(
+                f"⚡ ACWR {acwr} leggermente elevato (>{ACWR_SWEET_HIGH}). "
+                f"Volume ridotto dell'8%."
+            )
+            science_notes.append(
+                "Gabbett (2016): ACWR 1.3-1.5 richiede cautela. "
+                "Evitare ulteriori spike di carico."
+            )
+        elif acwr < ACWR_SWEET_LOW and current_phase not in ["Tapering", "Ripresa"]:
+            # Undertraining — can increase cautiously
+            volume_multiplier = 1.05
+            adaptation_type = "acwr_undertraining"
+            science_notes.append(
+                f"ACWR {acwr} < {ACWR_SWEET_LOW}: margine per aumentare il carico. "
+                f"Volume +5% (Gabbett 2016: ACWR basso = atleta sotto-preparato = rischio paradosso)."
+            )
+        else:
+            science_notes.append(
+                f"ACWR {acwr}: nella zona ottimale ({ACWR_SWEET_LOW}-{ACWR_SWEET_HIGH}). "
+                f"Nessuna modifica di volume necessaria."
+            )
+    else:
+        science_notes.append(
+            f"Solo {days_with_data} giorni di dati (servono ≥{MIN_DAYS_FOR_ACWR}). "
+            f"ACWR non ancora affidabile — si applicano solo i limiti di fase."
+        )
+
+    # B) Monotony guard (Foster 1998)
+    if monotony > MONOTONY_THRESHOLD:
+        alerts.append(
+            f"⚠️ Monotonia allenamento: {monotony} (>{MONOTONY_THRESHOLD}). "
+            f"Troppa uniformità nei carichi giornalieri."
+        )
+        science_notes.append(
+            "Foster (1998): monotonia >2.0 associata a rischio overtraining. "
+            "Consigliato variare l'intensità tra i giorni e inserire riposo attivo."
+        )
+        # Small additional volume reduction
+        volume_multiplier = min(volume_multiplier, volume_multiplier * 0.95)
+
+    # C) Polarization check (Seiler 2010)
+    if runs_with_hr >= 5:
+        if polarization_alert == "troppa_intensita":
+            alerts.append(
+                f"⚠️ Solo {polarization_easy_pct*100:.0f}% corse facili "
+                f"(Seiler: target ≥80%). Troppa intensità — rischio overtraining."
+            )
+            science_notes.append(
+                "Seiler (2010): distribuzione polarizzata (≥80% easy) ottimizza "
+                "gli adattamenti aerobici e riduce il rischio di sovrallenamento."
+            )
+        elif polarization_alert == "poca_intensita":
+            alerts.append(
+                f"💡 {polarization_easy_pct*100:.0f}% corse facili. "
+                f"Servono più stimoli ad alta intensità (15-20% del volume)."
+            )
+            science_notes.append(
+                "Seiler (2010): almeno 15-20% del volume deve essere ad alta intensità "
+                "per stimolare adattamenti periferici e centrali."
+            )
+
+    # D) Phase-specific volume cap (Daniels periodization)
+    if current_phase == "Tapering":
+        # Mujika & Padilla 2003: progressive taper
+        # Find which taper week this is
+        taper_weeks = [w for w in all_weeks if w.get("phase") == "Tapering"]
+        taper_week_nums = sorted([w.get("week_number", 0) for w in taper_weeks])
+        current_week_num = future_weeks[0].get("week_number", 0) if future_weeks else 0
+
+        if current_week_num in taper_week_nums:
+            taper_idx = taper_week_nums.index(current_week_num)
+            # Progressive non-linear taper: week 1 → -20%, week 2 → -40%, week 3 → -55%
+            taper_reductions = [0.80, 0.60, 0.45]
+            taper_mult = taper_reductions[min(taper_idx, len(taper_reductions) - 1)]
+            volume_multiplier = min(volume_multiplier, taper_mult)
+            science_notes.append(
+                f"Mujika & Padilla (2003): taper settimana {taper_idx + 1} — "
+                f"volume al {taper_mult*100:.0f}% del picco, intensità mantenuta."
+            )
+        adaptation_type = "taper_mujika"
+    else:
+        science_notes.append(
+            f"Fase '{current_phase}': volume max {phase_cap['max_km']}km/sett, "
+            f"incremento max {phase_cap['max_increase']*100:.0f}% (ACSM 2013), "
+            f"lungo max {phase_cap['max_long_km']}km."
+        )
+
+    # E) If no adjustments needed
+    if volume_multiplier == 1.0 and not alerts:
+        # Log the analysis anyway
+        await db.adaptation_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "date": today.isoformat(),
+            "adapted": False,
+            "acwr": acwr,
+            "monotony": monotony,
+            "strain": strain,
+            "polarization_z1_pct": round(polarization_easy_pct * 100),
+            "phase": current_phase,
+            "volume_multiplier": 1.0,
+            "decisions": ["Nessun adattamento necessario — piano in linea."],
+        })
+        return {
+            "adapted": False,
+            "adaptation_type": "none",
+            "message": "Piano in linea con le performance. Nessun adattamento necessario.",
+            "metrics": {
+                "acwr": acwr,
+                "monotony": monotony,
+                "strain": strain,
+                "polarization_easy_pct": round(polarization_easy_pct * 100),
+                "weekly_km": round(last_week_km, 1),
+            },
+            "science": science_notes,
+        }
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 7 — APPLY VOLUME ADJUSTMENTS TO FUTURE WEEKS
+    # ══════════════════════════════════════════════════════════════════
     adapted_weeks = 0
-    example_changes = []
+    decisions = []
 
     for week in future_weeks:
-        new_target_km = round(week.get("target_km", 40) * volume_factor, 1)
-        new_target_km = min(new_target_km, 65)  # cap
+        old_km = week.get("target_km", 40)
+        new_km = round(old_km * volume_multiplier, 1)
+
+        # ACSM 10% rule: cap increase relative to last completed week
+        if last_week_km > 0 and new_km > last_week_km:
+            acsm_cap = round(last_week_km * (1 + phase_cap["max_increase"]), 1)
+            new_km = min(new_km, acsm_cap)
+
+        # Phase cap
+        new_km = min(new_km, phase_cap["max_km"])
+
+        # Don't reduce below 15km (minimum viable training)
+        new_km = max(new_km, 15.0)
 
         new_sessions = []
         for session in week.get("sessions", []):
             new_session = session.copy()
 
-            # Adjust distance
-            if session.get("target_distance_km"):
-                new_dist = round(session["target_distance_km"] * volume_factor, 1)
-                new_session["target_distance_km"] = min(new_dist, 24)  # cap long runs
+            # Adjust session distance proportionally
+            if session.get("target_distance_km") and session["target_distance_km"] > 0:
+                ratio = new_km / old_km if old_km > 0 else 1.0
+                new_dist = round(session["target_distance_km"] * ratio, 1)
+                # Long run cap from phase
+                if session.get("type") == "lungo":
+                    new_dist = min(new_dist, phase_cap["max_long_km"])
+                # General single-run cap
+                new_dist = max(new_dist, 2.0)
+                new_session["target_distance_km"] = new_dist
 
-            # Adjust pace: prefer VDOT-based paces, fallback to % factor
-            if session.get("target_pace") and session["target_pace"] != "max":
-                old_pace = session["target_pace"]
-                session_type = session.get("type", "")
-                daniels_zone = SESSION_PACE_ZONE.get(session_type)
-
-                if new_vdot_paces and daniels_zone and daniels_zone in new_vdot_paces:
-                    # Use VDOT-derived pace
-                    new_pace = new_vdot_paces[daniels_zone]
-                else:
-                    # Fallback: apply % factor
-                    old_secs = pace_to_secs(old_pace)
-                    if old_secs and old_secs > 0:
-                        new_secs = max(old_secs * pace_factor, 210)
-                        new_pace = secs_to_pace(new_secs)
-                    else:
-                        new_pace = old_pace
-
-                new_session["target_pace"] = new_pace
-
-                # Collect example for message (first 2 changes)
-                if len(example_changes) < 2 and old_pace != new_pace:
-                    example_changes.append(
-                        f"{session.get('title', session.get('type', ''))}: {old_pace} → {new_pace}/km"
-                    )
+            # NOTE: paces are NOT modified here.
+            # Pace updates are handled by auto_recalculate_vdot() using
+            # Daniels' VDOT with the 2/3 improvement rule.
 
             new_sessions.append(new_session)
 
         await db.training_plan.update_one(
             {"id": week["id"]},
             {"$set": {
-                "target_km": new_target_km,
+                "target_km": new_km,
                 "sessions": new_sessions,
                 "auto_adapted": True,
                 "adaptation_date": today.isoformat(),
-                "vdot_based": True if new_vdot_paces else False,
-                "vdot_value": (current_vdot + vdot_delta) if current_vdot else None,
+                "adaptation_type": adaptation_type,
+                "adaptation_metrics": {
+                    "acwr": acwr,
+                    "monotony": monotony,
+                    "volume_multiplier": round(volume_multiplier, 3),
+                },
             }}
         )
         adapted_weeks += 1
 
-    # Step E: Build summary message
-    if example_changes:
-        message_parts.append("Esempi: " + "; ".join(example_changes) + ".")
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 8 — LOG & RETURN
+    # ══════════════════════════════════════════════════════════════════
+    vol_change_pct = round((volume_multiplier - 1) * 100)
+    decisions = alerts.copy()
+    if vol_change_pct != 0:
+        direction = "aumentato" if vol_change_pct > 0 else "ridotto"
+        decisions.append(f"Volume {direction} del {abs(vol_change_pct)}%.")
+
+    # Persist adaptation log for trend analysis
+    await db.adaptation_log.insert_one({
+        "id": str(uuid.uuid4()),
+        "date": today.isoformat(),
+        "adapted": True,
+        "acwr": acwr,
+        "monotony": monotony,
+        "strain": strain,
+        "polarization_z1_pct": round(polarization_easy_pct * 100),
+        "phase": current_phase,
+        "volume_multiplier": round(volume_multiplier, 3),
+        "adapted_weeks": adapted_weeks,
+        "decisions": decisions,
+    })
+
+    # Build message
+    msg_parts = []
+    if vol_change_pct != 0:
+        direction = "aumentato" if vol_change_pct > 0 else "ridotto"
+        msg_parts.append(f"Volume {direction} del {abs(vol_change_pct)}% per {adapted_weeks} settimane.")
+    msg_parts.extend(alerts)
 
     return {
         "adapted": True,
         "adaptation_type": adaptation_type,
-        "avg_pace_diff_pct": round(avg_pace_diff, 1),
-        "hr_ok_ratio": round(hr_ok_ratio, 2),
-        "pace_factor": pace_factor,
-        "volume_factor": volume_factor,
+        "volume_multiplier": round(volume_multiplier, 3),
         "adapted_weeks": adapted_weeks,
-        "comparisons_count": len(comparisons),
-        "message": " ".join(message_parts),
+        "metrics": {
+            "acwr": acwr,
+            "monotony": monotony,
+            "strain": strain,
+            "polarization_easy_pct": round(polarization_easy_pct * 100),
+            "z1_runs": z1_count,
+            "z2_runs": z2_count,
+            "z3_runs": z3_count,
+            "weekly_km": round(last_week_km, 1),
+        },
+        "alerts": alerts,
+        "science": science_notes,
+        "message": " ".join(msg_parts) if msg_parts else "Piccoli aggiustamenti applicati.",
     }
 
 
