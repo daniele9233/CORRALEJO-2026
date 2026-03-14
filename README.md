@@ -175,10 +175,31 @@ https://corralejo-backend.onrender.com
 - Calcola deviazione di passo e distanza
 - Verdetto automatico: perfetto / troppo_lento / troppo_veloce / ok / extra
 
-#### Auto-adattamento Piano
-- Dopo sync Strava, ricalcola VDOT se ci sono nuovi migliori risultati
-- Aggiorna tutti i passi futuri in base al nuovo VDOT
+#### Auto-adattamento Piano (Base Scientifica Rigorosa)
+Dopo ogni sync Strava, il sistema esegue due funzioni:
+
+**1. `auto_recalculate_vdot()` — Aggiornamento Passi (Daniels 2014)**
+- Ricalcola VDOT solo da **sforzi validati**: distanza ≥4km, FC ≥85% FCmax
+- Applica la **regola dei 2/3 di Daniels**: solo il 67% del miglioramento misurato viene applicato
+- **Cap +1 VDOT per mesociclo** (4 settimane): evita che i passi superino l'adattamento fisiologico
+- In caso di regressione, il VDOT viene ridotto integralmente per sicurezza
+- Aggiorna automaticamente tutti i passi futuri tramite `SESSION_PACE_ZONE`
+
+**2. `auto_adapt_plan()` — Gestione Volume (5 modelli peer-reviewed)**
+
+| Modello | Riferimento | Cosa controlla |
+|---|---|---|
+| **Spike Detection** | Impellizzeri et al. (2020) Int J Sports Physiol Perform | Carico acuto e cronico monitorati **separatamente** (NON come ratio ACWR, che soffre di mathematical coupling). Spike >30% WoW → volume -15% |
+| **Regola del 10%** | ACSM (2013) Guidelines, 9th ed. | Incremento settimanale max 10% — guardrail primario |
+| **Monotonia** | Foster (1998) Med Sci Sports Exerc | Se monotonia >2.0 → rischio overtraining, volume -5% |
+| **Polarizzazione 80/20** | Seiler (2010) Int J Sports Physiol Perform | Se <75% corse facili → avviso troppa intensità |
+| **Tapering** | Mujika & Padilla (2003) Med Sci Sports Exerc | Settimane 1/2/3 → -20%/-40%/-55% volume, intensità mantenuta |
+
+**Nota metodologica**: Il ratio ACWR (Gabbett 2016) è stato deliberatamente escluso.
+Impellizzeri et al. (2020) hanno dimostrato che il mathematical coupling (il carico acuto è già incluso nel cronico) produce correlazioni spurie. La meta-analisi BMC Sports Medicine (2025) conferma che l'ACWR va usato con estrema cautela. Al suo posto, il sistema monitora i carichi separatamente e usa lo spike detection settimana-su-settimana.
+
 - Auto-completa sessioni corrispondenti alle corse sincronizzate
+- Ogni decisione viene salvata in `adaptation_log` per tracciabilità
 
 ---
 
@@ -346,12 +367,16 @@ Gestione OAuth Strava:
 - 6 fasi di periodizzazione con progressione controllata
 - Settimane di recupero automatiche
 - Passi calcolati dalle formule di Jack Daniels (VDOT)
-- Adattamento dinamico basato sulle prestazioni reali
+- Auto-adattamento basato su 5 modelli scientifici peer-reviewed
+- Volume caps fase-specifici (Daniels + ACSM 10% rule)
+- Tapering progressivo (Mujika & Padilla 2003)
 
 ### 2. VDOT Dinamico (Jack Daniels)
-- Calcolo automatico del VDOT dai migliori risultati
+- Calcolo automatico del VDOT solo da **sforzi validati** (≥4km, FC ≥85% HRmax)
+- **Regola dei 2/3**: applica solo il 67% del miglioramento misurato
+- **Cap +1 VDOT per mesociclo** (4 settimane)
 - 5 zone di allenamento derivate: Easy, Marathon, Threshold, Interval, Repetition
-- Ricalcolo automatico dopo ogni gara/test
+- Ricalcolo automatico dopo ogni sync Strava
 - Aggiornamento di tutti i passi futuri nel piano
 
 ### 3. Sync Strava con Feedback
@@ -363,10 +388,23 @@ Gestione OAuth Strava:
 - Trigger ricalcolo VDOT dopo sync
 
 ### 4. Analisi AI delle Corse
-- Analisi tramite OpenAI (GPT) con fallback algoritmico
+- Analisi tramite Anthropic Claude con fallback algoritmico avanzato
 - Confronto dettagliato con la sessione pianificata
-- Deviazione passo e distanza in percentuale
-- Raccomandazioni personalizzate
+- Analisi FC vs zone VDOT, passo vs target, distanza
+- Raccomandazioni personalizzate per la prossima sessione
+- Funziona anche per corse extra fuori dal piano
+
+### 4b. Injury Risk Score
+- Analisi predittiva del rischio infortunio
+- Fattori: carico settimanale, incremento WoW, intensità media, giorni recupero
+- Gauge visuale con score 0-100 e codice colore (verde/giallo/arancione/rosso)
+- Grafico storico carico settimanale con evidenziazione spike
+- Raccomandazioni e alert personalizzati
+
+### 4c. Pace & Race Predictor (Calcolatore)
+- Previsioni gara dalla formula di Riegel
+- Calcolo VDOT e zone di allenamento da un risultato race
+- Input: distanza + tempo → output: previsioni per 5K/10K/15K/HM/M
 
 ### 5. Sistema Medaglie a 6 Livelli
 Per ogni distanza (5km, 10km, 15km, 21.1km):
@@ -428,8 +466,8 @@ Base URL: `https://corralejo-backend.onrender.com/api`
 | GET | `/training-plan/week/{week_id}` | Dettaglio singola settimana |
 | PATCH | `/training-plan/session/complete` | Segna sessione completata/non completata |
 | PUT | `/training-plan/week-sessions` | Aggiorna tutte le sessioni di una settimana |
-| POST | `/training-plan/adapt` | Auto-adatta piano basato su prestazioni recenti |
-| GET | `/training-plan/adaptation-status` | Verifica se adattamento consigliato |
+| POST | `/training-plan/adapt` | Auto-adatta volume (spike detection, Foster, Seiler, Mujika, ACSM 10%) |
+| GET | `/training-plan/adaptation-status` | Metriche scientifiche: carico acuto/cronico, WoW%, monotonia, polarizzazione |
 | POST | `/training-plan/recalculate-paces` | Ricalcola passi futuri dal VDOT aggiornato |
 
 ### Corse
@@ -446,11 +484,14 @@ Base URL: `https://corralejo-backend.onrender.com/api`
 | GET | `/analytics` | Stats complete: VO2max, previsioni gara, zone, best efforts, volume settimanale |
 | GET | `/vdot/paces` | VDOT corrente + 5 passi di Daniels (Easy/Marathon/Threshold/Interval/Repetition) |
 | GET | `/weekly-history` | Storico KM settimanali (52 settimane) |
+| GET | `/vo2max-history` | Storico andamento VDOT nel tempo |
+| POST | `/vo2max-history/rebuild` | Ricostruisce storico VDOT da tutte le corse ≥3km |
+| GET | `/injury-risk` | Injury Risk Score: ACWR, carico, intensità, recupero, raccomandazioni |
 
 ### AI
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
-| POST | `/ai/analyze-run` | Analisi AI della corsa vs sessione pianificata |
+| POST | `/ai/analyze-run` | Analisi AI (Claude API + fallback algoritmico avanzato) |
 
 ### Test
 | Metodo | Endpoint | Descrizione |
