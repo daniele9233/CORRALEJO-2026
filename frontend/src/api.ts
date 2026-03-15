@@ -58,4 +58,6 @@ export const api = {
   getInjuryRisk: () => apiFetch('/injury-risk'),
   getWeeklyReport: () => apiFetch('/weekly-report'),
   sendWeeklyReport: () => apiFetch('/weekly-report/send', { method: 'POST' }),
+  getCadenceHistory: () => apiFetch('/cadence-history'),
+  getBestEfforts: () => apiFetch('/best-efforts'),
 };

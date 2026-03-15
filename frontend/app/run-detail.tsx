@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator,
+  ActivityIndicator, Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SESSION_COLORS, SESSION_ICONS } from '../src/theme';
 import { api } from '../src/api';
-import { Run, AIAnalysis } from '../src/types';
+import { Run, AIAnalysis, RunSplit } from '../src/types';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 export default function RunDetailScreen() {
   const router = useRouter();
@@ -394,6 +396,78 @@ export default function RunDetailScreen() {
               <Text style={styles.zoneLabel}>Z4</Text>
               <Text style={styles.zoneLabel}>Z5</Text>
             </View>
+          </View>
+        )}
+
+        {/* Splits per km */}
+        {run.splits && run.splits.length > 0 && (() => {
+          const avgPaceSecs = paceToSeconds(run.avg_pace);
+          const splitPaces = run.splits.map(s => paceToSeconds(s.pace)).filter(s => s > 0);
+          const maxPace = Math.max(...splitPaces);
+          const minPace = Math.min(...splitPaces);
+          const barMaxWidth = SCREEN_WIDTH - 160;
+
+          return (
+            <View style={styles.splitsCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.lg }}>
+                <Ionicons name="bar-chart" size={18} color={COLORS.lime} />
+                <Text style={styles.hrTitle}>SPLITS PER KM</Text>
+              </View>
+              {run.splits.map((split, i) => {
+                const secs = paceToSeconds(split.pace);
+                if (secs <= 0) return null;
+                const barPct = maxPace > 0 ? (secs / maxPace) : 0.5;
+                const barW = Math.max(20, barPct * barMaxWidth);
+                const isFaster = secs < avgPaceSecs;
+                const isSlower = secs > avgPaceSecs;
+                const barColor = isFaster ? COLORS.green : isSlower ? COLORS.red : COLORS.textSecondary;
+
+                return (
+                  <View key={i} style={styles.splitRow}>
+                    <Text style={styles.splitKm}>{split.km}</Text>
+                    <View style={{ flex: 1 }}>
+                      <View style={[styles.splitBar, { width: barW, backgroundColor: barColor + '60' }]}>
+                        <Text style={[styles.splitPace, { color: barColor }]}>{split.pace}</Text>
+                      </View>
+                    </View>
+                    {split.hr && (
+                      <Text style={styles.splitHr}>{split.hr} bpm</Text>
+                    )}
+                  </View>
+                );
+              })}
+              <View style={styles.splitLegend}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.green }} />
+                  <Text style={{ fontSize: FONT_SIZES.xs, color: COLORS.textMuted }}>Faster than avg</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.red }} />
+                  <Text style={{ fontSize: FONT_SIZES.xs, color: COLORS.textMuted }}>Slower than avg</Text>
+                </View>
+                <Text style={{ fontSize: FONT_SIZES.xs, color: COLORS.textMuted }}>Avg: {run.avg_pace}/km</Text>
+              </View>
+            </View>
+          );
+        })()}
+
+        {/* Cadence + Elevation row */}
+        {(run.avg_cadence || run.elevation_gain) && (
+          <View style={styles.extraStatsCard}>
+            {run.avg_cadence != null && (
+              <View style={styles.extraStatItem}>
+                <Ionicons name="footsteps" size={18} color={COLORS.blue} />
+                <Text style={styles.extraStatValue}>{run.avg_cadence}</Text>
+                <Text style={styles.extraStatLabel}>spm cadenza</Text>
+              </View>
+            )}
+            {run.elevation_gain != null && (
+              <View style={styles.extraStatItem}>
+                <Ionicons name="trending-up" size={18} color={COLORS.orange} />
+                <Text style={styles.extraStatValue}>{Math.round(run.elevation_gain)}</Text>
+                <Text style={styles.extraStatLabel}>m dislivello</Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -790,6 +864,74 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   zoneLabel: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
+
+  /* splits */
+  splitsCard: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+  },
+  splitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: SPACING.sm,
+  },
+  splitKm: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    width: 24,
+    textAlign: 'center',
+  },
+  splitBar: {
+    height: 24,
+    borderRadius: BORDER_RADIUS.sm,
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.sm,
+  },
+  splitPace: {
+    fontSize: FONT_SIZES.xs,
+    fontWeight: '800',
+  },
+  splitHr: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    width: 55,
+    textAlign: 'right',
+  },
+  splitLegend: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: SPACING.md,
+    paddingTop: SPACING.md,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.cardBorder,
+  },
+
+  /* extra stats (cadence, elevation) */
+  extraStatsCard: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.lg,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+  },
+  extraStatItem: { alignItems: 'center', gap: 4 },
+  extraStatValue: {
+    fontSize: FONT_SIZES.xl,
+    color: COLORS.text,
+    fontWeight: '800',
+  },
+  extraStatLabel: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
 
   /* notes */
   notesCard: {

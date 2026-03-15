@@ -1109,7 +1109,14 @@ FORMATO RISPOSTA:
 📋 PIANO VS REALTÀ: [confronto specifico con i numeri]
 💪 PUNTI POSITIVI: [cosa è andato bene]
 ⚠️ ATTENZIONE: [cosa migliorare o rischi]
-🎯 PROSSIMA SESSIONE: [suggerimento concreto per il prossimo allenamento]"""
+🎯 PROSSIMA SESSIONE: [suggerimento concreto per il prossimo allenamento]
+
+REGOLE AGGIUNTIVE:
+- Analizza la corsa nel contesto dell'obiettivo Mezza Maratona (Dicembre 2026, target 1:35:00)
+- Confronta con le tendenze di allenamento recenti (ultime 5 corse fornite)
+- Dai consigli specifici per la fase di allenamento corrente
+- Sii specifico e concreto, evita risposte generiche o da template
+- Cita il VDOT dell'atleta e i passi Daniels quando dai feedback sui ritmi"""
 
     # ── Build user message with plan comparison ──
     run_info = f"""CORSA DA ANALIZZARE:
@@ -1184,23 +1191,38 @@ CONTESTO SETTIMANA:
 
     response = None
 
-    # Try Claude AI first
+    # Try Google Gemini first (free tier)
     try:
-        import anthropic
-        ai_key = os.environ.get('ANTHROPIC_API_KEY', '')
-        if ai_key:
-            client_ai = anthropic.AsyncAnthropic(api_key=ai_key)
-            result = await client_ai.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=1024,
-                system=system_msg,
-                messages=[
-                    {"role": "user", "content": run_info},
-                ],
-            )
-            response = result.content[0].text
+        gemini_key = os.environ.get('GEMINI_API_KEY', '')
+        if gemini_key:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel('gemini-2.0-flash')
+            gemini_response = model.generate_content(system_msg + "\n\n" + run_info)
+            response = gemini_response.text
+            logger.info("AI analysis generated via Google Gemini")
     except Exception as e:
-        logger.warning(f"Claude AI unavailable, using enhanced analysis: {e}")
+        logger.warning(f"Gemini AI unavailable: {e}")
+
+    # Try Claude AI as second option
+    if not response:
+        try:
+            import anthropic
+            ai_key = os.environ.get('ANTHROPIC_API_KEY', '')
+            if ai_key:
+                client_ai = anthropic.AsyncAnthropic(api_key=ai_key)
+                result = await client_ai.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=1024,
+                    system=system_msg,
+                    messages=[
+                        {"role": "user", "content": run_info},
+                    ],
+                )
+                response = result.content[0].text
+                logger.info("AI analysis generated via Claude")
+        except Exception as e:
+            logger.warning(f"Claude AI unavailable: {e}")
 
     # Fallback: enhanced analysis without AI
     if not response:
@@ -2550,6 +2572,7 @@ async def get_strava_activities(per_page: int = 200):
                         "avg_hr": a.get("average_heartrate"),
                         "max_hr": a.get("max_heartrate"),
                         "elevation_gain": a.get("total_elevation_gain"),
+                        "avg_cadence": a.get("average_cadence"),  # Strava gives half-cadence (one foot)
                     })
 
                 if len(raw) < per_page:
@@ -2611,9 +2634,55 @@ async def sync_strava_activities():
             "location": None,
             "strava_id": act.get("strava_id"),
             "plan_feedback": plan_feedback,
+            "avg_cadence": round(act["avg_cadence"] * 2) if act.get("avg_cadence") else None,
+            "elevation_gain": act.get("elevation_gain"),
         }
         await db.runs.insert_one(run_doc)
         synced += 1
+
+        # ---- FETCH DETAILED ACTIVITY (splits + best efforts) ----
+        try:
+            token = await get_valid_strava_token()
+            async with httpx.AsyncClient(timeout=30) as http:
+                detail_resp = await http.get(
+                    f"https://www.strava.com/api/v3/activities/{act['strava_id']}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params={"include_all_efforts": "true"}
+                )
+                if detail_resp.status_code == 200:
+                    detail = detail_resp.json()
+
+                    # --- Splits per km ---
+                    splits_metric = detail.get("splits_metric", [])
+                    if splits_metric:
+                        splits = []
+                        for idx, sp in enumerate(splits_metric):
+                            sp_dist = sp.get("distance", 0)
+                            sp_time = sp.get("elapsed_time", 0)
+                            sp_hr = sp.get("average_heartrate")
+                            if sp_dist > 0 and sp_time > 0:
+                                sp_pace_s = sp_time / (sp_dist / 1000)
+                                sp_pace = f"{int(sp_pace_s // 60)}:{int(sp_pace_s % 60):02d}"
+                            else:
+                                sp_pace = "0:00"
+                            splits.append({
+                                "km": idx + 1,
+                                "pace": sp_pace,
+                                "hr": round(sp_hr) if sp_hr else None,
+                                "distance": round(sp_dist, 1),
+                                "elapsed_time": sp_time,
+                            })
+                        await db.runs.update_one(
+                            {"id": run_doc["id"]},
+                            {"$set": {"splits": splits}}
+                        )
+
+                    # --- Best efforts ---
+                    best_efforts_raw = detail.get("best_efforts", [])
+                    if best_efforts_raw:
+                        await _process_best_efforts(best_efforts_raw, run_doc)
+        except Exception as e:
+            logger.error(f"Error fetching detailed activity {act['strava_id']}: {e}")
 
         # Auto-complete matching planned session
         if plan_feedback.get("week_id") and plan_feedback.get("session_index") is not None:
@@ -2877,6 +2946,138 @@ async def auto_recalculate_vdot() -> dict:
         result["message"] = f"VDOT invariato a {new_vdot}"
 
     return result
+
+
+async def _process_best_efforts(best_efforts_raw: list, run_doc: dict):
+    """Process best efforts from a Strava detailed activity response.
+    Compares with stored bests, updates if PR, sends push notification."""
+    STANDARD_DISTANCES = ["400m", "1/2 mile", "1k", "1 mile", "2 mile", "5k", "10k", "Half-Marathon"]
+
+    for effort in best_efforts_raw:
+        name = effort.get("name", "")
+        if name not in STANDARD_DISTANCES:
+            continue
+
+        elapsed = effort.get("elapsed_time", 0)
+        pr_rank = effort.get("pr_rank")
+        distance = effort.get("distance", 0)
+        start_date = effort.get("start_date_local", "")[:10]
+
+        if elapsed <= 0 or distance <= 0:
+            continue
+
+        # Format time
+        if elapsed >= 3600:
+            hours = elapsed // 3600
+            mins = (elapsed % 3600) // 60
+            secs = elapsed % 60
+            time_str = f"{hours}:{mins:02d}:{secs:02d}"
+        else:
+            mins = elapsed // 60
+            secs = elapsed % 60
+            time_str = f"{mins}:{secs:02d}"
+
+        # Calculate pace per km
+        pace_s_per_km = elapsed / (distance / 1000)
+        pace_str = f"{int(pace_s_per_km // 60)}:{int(pace_s_per_km % 60):02d}"
+
+        effort_doc = {
+            "distance_name": name,
+            "distance_m": distance,
+            "elapsed_time": elapsed,
+            "time_str": time_str,
+            "pace": pace_str,
+            "date": start_date or run_doc.get("date", ""),
+            "run_id": run_doc.get("id"),
+            "strava_id": run_doc.get("strava_id"),
+            "pr_rank": pr_rank,
+        }
+
+        # Check existing best for this distance
+        existing = await db.best_efforts.find_one({"distance_name": name}, {"_id": 0})
+
+        is_new_pr = False
+        if not existing:
+            is_new_pr = True
+        elif elapsed < existing.get("elapsed_time", float('inf')):
+            is_new_pr = True
+        elif pr_rank == 1:
+            is_new_pr = True
+
+        if is_new_pr:
+            effort_doc["id"] = make_id()
+            effort_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+            await db.best_efforts.update_one(
+                {"distance_name": name},
+                {"$set": effort_doc},
+                upsert=True,
+            )
+
+            # Send push notification for new PR
+            old_time = existing.get("time_str", "") if existing else None
+            if old_time:
+                improvement = existing.get("elapsed_time", 0) - elapsed
+                imp_str = f" (-{improvement}s)" if improvement > 0 else ""
+                await send_push_notification(
+                    f"Nuovo record {name}! {time_str}{imp_str}",
+                    f"Hai battuto il tuo PR su {name}: {old_time} -> {time_str}. Passo: {pace_str}/km"
+                )
+            else:
+                await send_push_notification(
+                    f"Primo record {name}: {time_str}",
+                    f"Registrato il tuo primo best effort su {name}. Passo: {pace_str}/km"
+                )
+
+    logger.info(f"Processed best efforts for run {run_doc.get('id')}")
+
+
+@api_router.get("/best-efforts")
+async def get_best_efforts():
+    """Return all best efforts with dates."""
+    efforts = await db.best_efforts.find({}, {"_id": 0}).to_list(50)
+    # Sort by distance
+    distance_order = {"400m": 400, "1/2 mile": 805, "1k": 1000, "1 mile": 1609, "2 mile": 3219, "5k": 5000, "10k": 10000, "Half-Marathon": 21097}
+    efforts.sort(key=lambda e: distance_order.get(e.get("distance_name", ""), 99999))
+    return {"best_efforts": efforts}
+
+
+@api_router.get("/cadence-history")
+async def get_cadence_history():
+    """Get monthly cadence averages for charting.
+    Groups runs by month, picks easy-pace runs, returns monthly avg cadence."""
+    runs = await db.runs.find(
+        {"avg_cadence": {"$exists": True, "$ne": None}},
+        {"_id": 0, "date": 1, "avg_cadence": 1, "avg_pace": 1, "run_type": 1}
+    ).sort("date", 1).to_list(2000)
+
+    if not runs:
+        return {"cadence_history": []}
+
+    # Group by month
+    from collections import defaultdict
+    monthly = defaultdict(list)
+    for r in runs:
+        run_date = r.get("date", "")
+        if len(run_date) >= 7:
+            month_key = run_date[:7]  # "YYYY-MM"
+            monthly[month_key].append(r)
+
+    cadence_history = []
+    for month, month_runs in sorted(monthly.items()):
+        # Prefer easy-pace runs for cadence trend (most consistent)
+        easy_runs = [r for r in month_runs if r.get("run_type") in ("corsa_lenta", "lungo", "easy")]
+        sample = easy_runs[:4] if easy_runs else month_runs[:4]
+
+        cadences = [r["avg_cadence"] for r in sample if r.get("avg_cadence")]
+        if cadences:
+            avg_cad = round(sum(cadences) / len(cadences))
+            cadence_history.append({
+                "month": month,
+                "avg_cadence": avg_cad,
+                "runs_count": len(cadences),
+            })
+
+    return {"cadence_history": cadence_history}
 
 
 async def update_personal_bests_and_medals():

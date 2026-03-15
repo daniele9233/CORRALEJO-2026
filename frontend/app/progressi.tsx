@@ -167,11 +167,118 @@ function PaceLineChart({ data }: { data: any[] }) {
   );
 }
 
+// ---- Cadence Line Chart Component ----
+function CadenceLineChart({ data }: { data: { month: string; avg_cadence: number; runs_count: number }[] }) {
+  if (!data || data.length < 2) return null;
+
+  const cadences = data.map(d => d.avg_cadence);
+  const maxCad = Math.max(...cadences, 185) + 5;
+  const minCad = Math.min(...cadences, 170) - 5;
+  const rangeCad = maxCad - minCad || 20;
+  const cadChartH = 140;
+  const cadChartW = CHART_WIDTH - 40;
+  const stepX = cadChartW / Math.max(data.length - 1, 1);
+
+  const toY = (v: number) => cadChartH - ((v - minCad) / rangeCad) * cadChartH;
+
+  // Target line at 180 spm
+  const targetY = toY(180);
+
+  const fmtMonth = (m: string) => {
+    try { const p = m.split('-'); return `${p[1]}/${p[0].slice(2)}`; } catch { return m; }
+  };
+
+  return (
+    <View style={{ height: cadChartH + 30, marginTop: SPACING.sm }}>
+      {/* Y-axis labels */}
+      <View style={{ position: 'absolute', left: 0, top: 0, height: cadChartH, justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{maxCad}</Text>
+        <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{Math.round((minCad + maxCad) / 2)}</Text>
+        <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{minCad}</Text>
+      </View>
+
+      {/* Chart area */}
+      <View style={{ marginLeft: 36, height: cadChartH, position: 'relative' }}>
+        {/* Grid lines */}
+        {[0, 0.5, 1].map((pct, i) => (
+          <View key={i} style={{
+            position: 'absolute', top: pct * cadChartH,
+            left: 0, right: 0, height: 1,
+            backgroundColor: COLORS.cardBorder, opacity: 0.5,
+          }} />
+        ))}
+
+        {/* Target line at 180 spm */}
+        {targetY >= 0 && targetY <= cadChartH && (
+          <>
+            <View style={{
+              position: 'absolute', top: targetY,
+              left: 0, right: 0, height: 1,
+              backgroundColor: COLORS.lime, opacity: 0.6,
+              borderStyle: 'dashed',
+            }} />
+            <Text style={{
+              position: 'absolute', top: targetY - 12, right: 0,
+              fontSize: 8, color: COLORS.lime, fontWeight: '700',
+            }}>180</Text>
+          </>
+        )}
+
+        {/* Lines between points */}
+        {data.map((d, i) => {
+          if (i === 0) return null;
+          const prev = data[i - 1];
+          const x1 = (i - 1) * stepX, y1 = toY(prev.avg_cadence);
+          const x2 = i * stepX, y2 = toY(d.avg_cadence);
+          const dx = x2 - x1, dy = y2 - y1;
+          const length = Math.sqrt(dx * dx + dy * dy);
+          const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+          return (
+            <View key={`cline-${i}`} style={{
+              position: 'absolute', left: x1, top: y1,
+              width: length, height: 2, backgroundColor: COLORS.blue,
+              transform: [{ rotate: `${angle}deg` }], transformOrigin: 'left center', opacity: 0.8,
+            }} />
+          );
+        })}
+
+        {/* Dots + values */}
+        {data.map((d, i) => (
+          <React.Fragment key={`cdot-${i}`}>
+            <View style={{
+              position: 'absolute', left: i * stepX - 4, top: toY(d.avg_cadence) - 4,
+              width: 8, height: 8, borderRadius: 4,
+              backgroundColor: d.avg_cadence >= 180 ? COLORS.lime : COLORS.blue,
+            }} />
+            <Text style={{
+              position: 'absolute', left: i * stepX - 10, top: toY(d.avg_cadence) - 18,
+              fontSize: 8, color: COLORS.text, fontWeight: '700', width: 24, textAlign: 'center',
+            }}>{d.avg_cadence}</Text>
+          </React.Fragment>
+        ))}
+      </View>
+
+      {/* X-axis labels */}
+      <View style={{ marginLeft: 36, flexDirection: 'row', marginTop: 4 }}>
+        {data.map((d, i) => (
+          <Text key={i} style={{
+            position: 'absolute', left: i * stepX - 14, fontSize: 7,
+            color: COLORS.textMuted, width: 30, textAlign: 'center',
+          }}>
+            {i % Math.max(1, Math.floor(data.length / 6)) === 0 ? fmtMonth(d.month) : ''}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export default function ProgressiScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [analytics, setAnalytics] = useState<any>(null);
+  const [cadenceHistory, setCadenceHistory] = useState<any[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -183,8 +290,12 @@ export default function ProgressiScreen() {
     try {
       setLoading(true);
       setError(false);
-      const data = await api.getAnalytics();
+      const [data, cadenceData] = await Promise.all([
+        api.getAnalytics(),
+        api.getCadenceHistory().catch(() => ({ cadence_history: [] })),
+      ]);
       setAnalytics(data);
+      setCadenceHistory(cadenceData.cadence_history || []);
     } catch (e) {
       console.error(e);
       setError(true);
@@ -453,6 +564,23 @@ export default function ProgressiScreen() {
               </View>
             </View>
             <Text style={styles.chartNote}>↓ Linee che scendono = passo più veloce (meglio)</Text>
+          </View>
+        )}
+
+        {/* Cadence Trend */}
+        {cadenceHistory.length >= 2 && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="footsteps" size={20} color={COLORS.blue} />
+              <Text style={styles.sectionTitle}>CADENZA</Text>
+            </View>
+            <Text style={styles.predBasedOn}>
+              Media mensile (spm) — target: 180 passi/min
+            </Text>
+            <CadenceLineChart data={cadenceHistory} />
+            <Text style={styles.chartNote}>
+              Punti verdi = cadenza a target (180+) — Linea tratteggiata = obiettivo
+            </Text>
           </View>
         )}
 
