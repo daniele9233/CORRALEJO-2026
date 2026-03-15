@@ -1277,25 +1277,38 @@ async def cleanup_duplicate_runs():
 
 
 async def _rebuild_vo2max_history():
-    """Rebuild vo2max_history collection from all valid runs (4km+)."""
+    """Rebuild vo2max_history collection from validated post-injury runs (2026+, ≥4km, HR≥85%)."""
     await db.vo2max_history.delete_many({})
     runs = await db.runs.find({}, {"_id": 0}).sort("date", 1).to_list(2000)
+    profile = await db.profile.find_one({}, {"_id": 0}) or {}
+    max_hr = profile.get("max_hr", 180)
 
     best_vdot_so_far = None
     for run in runs:
         dist = run.get("distance_km", 0)
         dur = run.get("duration_minutes", 0)
         run_date = run.get("date", "")
-        if dist >= 3 and dur > 0 and run_date:
-            vdot = calculate_vdot_from_race(dist, dur)
-            if vdot and (best_vdot_so_far is None or vdot > best_vdot_so_far):
-                best_vdot_so_far = round(vdot, 1)
-                await db.vo2max_history.insert_one({
-                    "id": make_id(),
-                    "date": run_date,
-                    "vdot": best_vdot_so_far,
-                    "based_on": f"{dist}km ({run.get('avg_pace', '?')}/km)"
-                })
+        hr = run.get("avg_hr")
+
+        # Only post-injury (2026+), validated efforts (≥4km)
+        if not run_date.startswith("2026") or dist < 4 or dur <= 0:
+            continue
+        # HR validation: ≥85% HRmax or no HR data
+        if hr and max_hr > 0 and (hr / max_hr) < 0.85:
+            continue
+
+        vdot = calculate_vdot_from_race(dist, dur)
+        if vdot:
+            vdot = round(vdot, 1)
+            if best_vdot_so_far is None or vdot > best_vdot_so_far:
+                best_vdot_so_far = vdot
+            await db.vo2max_history.insert_one({
+                "id": make_id(),
+                "date": run_date,
+                "vdot": vdot,
+                "training_vdot": best_vdot_so_far,
+                "based_on": f"{dist}km ({run.get('avg_pace', '?')}/km)"
+            })
 
     # Also update profile with current best VDOT
     if best_vdot_so_far:
@@ -1863,9 +1876,31 @@ async def get_analytics():
         if len(entry) > 1:  # has at least one zone
             pace_progression.append(entry)
 
-    # ---- VO2max history ----
-    vo2max_history_docs = await db.vo2max_history.find({}, {"_id": 0}).sort("date", 1).to_list(200)
-    vo2max_history = [{"date": d.get("date"), "vdot": d.get("vdot"), "based_on": d.get("based_on", "")} for d in vo2max_history_docs]
+    # ---- VO2max history (computed dynamically from validated efforts, 2026+ only) ----
+    # Shows every validated effort's VDOT to track true progression
+    vo2max_history = []
+    running_best_vdot = None
+    for r in sorted(post_injury_runs, key=lambda x: x.get("date", "")):
+        dist = r.get("distance_km", 0)
+        dur = r.get("duration_minutes", 0)
+        hr = r.get("avg_hr")
+        if dist < 4 or dur <= 0:
+            continue
+        # Validate effort: HR ≥ 85% HRmax or no HR data
+        if hr and max_hr > 0 and (hr / max_hr) < 0.85:
+            continue
+        vdot_val_hist = calculate_vdot_from_race(dist, dur)
+        if vdot_val_hist:
+            vdot_rounded = round(vdot_val_hist, 1)
+            # Track running best for the "training VDOT" line
+            if running_best_vdot is None or vdot_rounded > running_best_vdot:
+                running_best_vdot = vdot_rounded
+            vo2max_history.append({
+                "date": r.get("date", ""),
+                "vdot": vdot_rounded,
+                "training_vdot": running_best_vdot,
+                "based_on": f"{dist}km ({r.get('avg_pace', '?')}/km)"
+            })
 
     return {
         "vo2max": vo2max,
