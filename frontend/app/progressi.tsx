@@ -421,7 +421,7 @@ export default function ProgressiScreen() {
             const stepX = vo2ChartW / Math.max(points.length - 1, 1);
 
             const toY = (v: number) => vo2ChartH - ((v - minV) / rangeV) * vo2ChartH;
-            const fmtDate = (d: string) => { try { const p = d.split('-'); return `${p[2]}/${p[1]}/${p[0].slice(2)}`; } catch { return d; } };
+            const fmtDate = (d: string) => { try { const p = d.split('-'); return `${p[2]}/${p[1]}`; } catch { return d; } };
 
             return (
               <View style={{ marginTop: SPACING.lg }}>

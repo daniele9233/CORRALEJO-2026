@@ -1878,29 +1878,47 @@ async def get_analytics():
 
     # ---- VO2max history (computed dynamically from validated efforts, 2026+ only) ----
     # Shows every validated effort's VDOT to track true progression
+    # ---- VO2max history: group by week, pick best effort per week ----
+    # This avoids showing every single run and gives a cleaner progression
     vo2max_history = []
     running_best_vdot = None
+    weekly_vdot = {}
     for r in sorted(post_injury_runs, key=lambda x: x.get("date", "")):
         dist = r.get("distance_km", 0)
         dur = r.get("duration_minutes", 0)
-        hr = r.get("avg_hr")
-        if dist < 4 or dur <= 0:
+        if dist < 3 or dur <= 0:
             continue
-        # Validate effort: HR ≥ 85% HRmax or no HR data
-        if hr and max_hr > 0 and (hr / max_hr) < 0.85:
+        # Accept runs with HR ≥ 75% HRmax OR runs without HR data (broader filter)
+        hr = r.get("avg_hr")
+        if hr and max_hr > 0 and (hr / max_hr) < 0.75:
             continue
         vdot_val_hist = calculate_vdot_from_race(dist, dur)
         if vdot_val_hist:
             vdot_rounded = round(vdot_val_hist, 1)
-            # Track running best for the "training VDOT" line
-            if running_best_vdot is None or vdot_rounded > running_best_vdot:
-                running_best_vdot = vdot_rounded
-            vo2max_history.append({
-                "date": r.get("date", ""),
-                "vdot": vdot_rounded,
-                "training_vdot": running_best_vdot,
-                "based_on": f"{dist}km ({r.get('avg_pace', '?')}/km)"
-            })
+            # Group by week
+            try:
+                from datetime import datetime as dt_parse
+                rd = dt_parse.strptime(r["date"], "%Y-%m-%d").date()
+                week_key = (rd - timedelta(days=rd.weekday())).isoformat()
+            except Exception:
+                week_key = r.get("date", "")[:7]
+            if week_key not in weekly_vdot or vdot_rounded > weekly_vdot[week_key]["vdot"]:
+                weekly_vdot[week_key] = {
+                    "date": r.get("date", ""),
+                    "vdot": vdot_rounded,
+                    "based_on": f"{dist}km ({r.get('avg_pace', '?')}/km)"
+                }
+
+    for week_key in sorted(weekly_vdot.keys()):
+        entry = weekly_vdot[week_key]
+        if running_best_vdot is None or entry["vdot"] > running_best_vdot:
+            running_best_vdot = entry["vdot"]
+        vo2max_history.append({
+            "date": entry["date"],
+            "vdot": entry["vdot"],
+            "training_vdot": running_best_vdot,
+            "based_on": entry["based_on"]
+        })
 
     return {
         "vo2max": vo2max,
@@ -2644,9 +2662,17 @@ async def sync_strava_activities():
             "distance_km": {"$gte": act["distance_km"] - 0.3, "$lte": act["distance_km"] + 0.3}
         })
         if date_match:
+            update_fields = {
+                "strava_id": act.get("strava_id"),
+                "notes": (date_match.get("notes", "") or "") + f" [Strava: {act.get('name', '')}]",
+            }
+            if act.get("avg_cadence") and not date_match.get("avg_cadence"):
+                update_fields["avg_cadence"] = round(act["avg_cadence"] * 2)
+            if act.get("elevation_gain") and not date_match.get("elevation_gain"):
+                update_fields["elevation_gain"] = act["elevation_gain"]
             await db.runs.update_one(
                 {"id": date_match["id"]},
-                {"$set": {"strava_id": act.get("strava_id"), "notes": (date_match.get("notes", "") or "") + f" [Strava: {act.get('name', '')}]"}}
+                {"$set": update_fields}
             )
             matched += 1
             continue
@@ -3110,16 +3136,16 @@ async def get_cadence_history():
             if r.get("run_type") in ("corsa_lenta", "lungo", "easy")
             or (r.get("avg_hr") and r["avg_hr"] < HR_THRESHOLD)
         ]
-        sample = easy_runs[:4] if easy_runs else month_runs[:4]
+        sample = easy_runs if easy_runs else month_runs
 
-        for r in sample:
-            if r.get("avg_cadence"):
-                cadence_history.append({
-                    "date": r.get("date", ""),
-                    "cadence_spm": r["avg_cadence"],
-                    "pace": r.get("avg_pace", ""),
-                    "distance_km": r.get("distance_km", 0),
-                })
+        # Aggregate monthly average
+        cadences = [r["avg_cadence"] for r in sample if r.get("avg_cadence")]
+        if cadences:
+            cadence_history.append({
+                "month": month,
+                "avg_cadence": round(sum(cadences) / len(cadences)),
+                "runs_count": len(cadences),
+            })
 
     return {"cadence_history": cadence_history}
 
