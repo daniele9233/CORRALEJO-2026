@@ -1,3 +1,11 @@
+export interface RunSplit {
+  km: number;
+  pace: string;
+  hr?: number | null;
+  distance?: number;
+  elapsed_time?: number;
+}
+
 export interface Run {
   id: string;
   date: string;
@@ -11,6 +19,9 @@ export interface Run {
   run_type: string;
   notes?: string;
   location?: string;
+  avg_cadence?: number;
+  elevation_gain?: number;
+  splits?: RunSplit[];
 }
 
 export interface TrainingSession {

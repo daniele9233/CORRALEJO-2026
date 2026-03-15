@@ -51,7 +51,7 @@ Progettata per un runner in fase di ritorno post-infortunio con obiettivo tempo 
 | PyMongo | 4.5.0 | MongoDB driver |
 | Pydantic | 2.12.5 | Data validation |
 | httpx | 0.28.1 | HTTP client (Strava API) |
-| Anthropic | 0.52.0 | AI Coach (Claude API) |
+| Google Gemini | 2.0 Flash | AI Coach (API gratuita) |
 | python-dotenv | 1.2.1 | Env variables |
 
 ### Database
@@ -127,14 +127,14 @@ CORRALEJO-2026/
        ▼                                    ▼
 ┌──────────────┐                    ┌──────────────────┐
 │  Strava App  │                    │   Strava API v3  │
-│  (OAuth)     │                    │   Anthropic API     │
+│  (OAuth)     │                    │   Google Gemini API  │
 └──────────────┘                    └──────────────────┘
 ```
 
 - **Frontend** → App React Native con Expo Router, 5 tab principali + schermate modali
 - **Backend** → Single-file FastAPI (`server.py`), async, tutte le route sotto `/api`
 - **Database** → MongoDB Atlas cluster gratuito, 6 collezioni
-- **AI** → Anthropic Claude per analisi corse (con fallback a analisi algoritmica)
+- **AI** → Google Gemini (gratuito) per analisi corse (con fallback a analisi algoritmica)
 - **Strava** → OAuth 2.0 con deep linking per sync attività
 
 ---
@@ -322,7 +322,10 @@ Form per aggiungere risultati test:
 ### 8. 🔍 Dettaglio Corsa
 Analisi completa di una corsa:
 - Tutte le metriche (distanza, passo, durata, FC, tipo)
-- **Analisi AI** (generata da Claude/Anthropic o algoritmo interno):
+- **Piano vs Realtà**: confronto distanza/passo/durata con sessione pianificata
+- **Splits per km**: barre colorate (verde = più veloce, rosso = più lento della media)
+- **Cadenza e dislivello**: dati da Strava
+- **Analisi AI** (generata da Google Gemini o algoritmo interno):
   - Confronto con sessione pianificata
   - Deviazione passo e distanza
   - Verdetto: perfetto / troppo intenso / troppo leggero
@@ -345,10 +348,12 @@ Grafico a barre del piano di allenamento:
 
 ### 11. 📉 Progressi
 Storico evoluzione prestazioni:
-- **VO2max**: valore corrente vs target con barra progresso
+- **VO2max**: valore corrente vs target con barra progresso + grafico andamento
 - **Soglia anaerobica**: confronto pre-infortunio vs attuale + storico passi
+- **Andamento paces**: line chart settimanale per zona (Easy/Tempo/Fast)
+- **Cadenza**: grafico mensile con target 180 spm (dati da Strava)
 - **Previsioni gara**: 5km, 10km, 21.1km con progresso verso obiettivo
-- **Best efforts**: migliori prestazioni registrate
+- **Best efforts**: migliori prestazioni per distanza con passo e FC
 
 ### 12. 🧮 Calcolatore
 Strumenti di calcolo per il runner:
@@ -391,7 +396,7 @@ Gestione OAuth Strava:
 - Trigger ricalcolo VDOT dopo sync
 
 ### 4. Analisi AI delle Corse
-- Analisi tramite Anthropic Claude con fallback algoritmico avanzato
+- Analisi tramite Google Gemini (gratuito) con fallback algoritmico avanzato
 - Confronto dettagliato con la sessione pianificata
 - Analisi FC vs zone VDOT, passo vs target, distanza
 - Raccomandazioni personalizzate per la prossima sessione
@@ -490,11 +495,14 @@ Base URL: `https://corralejo-backend.onrender.com/api`
 | GET | `/vo2max-history` | Storico andamento VDOT nel tempo |
 | POST | `/vo2max-history/rebuild` | Ricostruisce storico VDOT da tutte le corse ≥3km |
 | GET | `/injury-risk` | Injury Risk Score: ACWR, carico, intensità, recupero, raccomandazioni |
+| GET | `/cadence-history` | Storico cadenza mensile (spm) per grafico trend |
+| GET | `/best-efforts` | Migliori prestazioni per distanza |
+| GET | `/runs/{run_id}/splits` | Splits per km di una corsa specifica |
 
 ### AI
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
-| POST | `/ai/analyze-run` | Analisi AI (Claude API + fallback algoritmico avanzato) |
+| POST | `/ai/analyze-run` | Analisi AI (Google Gemini + fallback algoritmico avanzato) |
 
 ### Test
 | Metodo | Endpoint | Descrizione |
@@ -682,7 +690,8 @@ npx eas build --platform android --profile preview
 | `MONGO_URL` | Connection string MongoDB Atlas |
 | `DB_NAME` | Nome database (`corralejo`) |
 | `PYTHON_VERSION` | Versione Python (`3.11.11`) |
-| `ANTHROPIC_API_KEY` | API key Anthropic (Claude) per AI Coach |
+| `GEMINI_API_KEY` | API key Google Gemini (gratuito) per AI Coach |
+| `ANTHROPIC_API_KEY` | (Legacy) API key Anthropic Claude |
 | `STRAVA_CLIENT_ID` | (Opzionale) Client ID app Strava |
 | `STRAVA_CLIENT_SECRET` | (Opzionale) Client Secret app Strava |
 
@@ -736,15 +745,15 @@ npx expo run:android
 
 ## 🔮 Prossimi Sviluppi
 
-- [ ] **Splits analysis** — Analisi passo per ogni km con grafico (negative split vs positive split)
 - [ ] **Shoe tracker** — km per scarpa da Strava, alert a 600km per cambio
-- [ ] **Cadence trend** — Monitoraggio cadenza nel tempo (target 180 spm)
 - [ ] **Elevation gain tracking** — Dislivello settimanale (utile per Fuerteventura, terreno ondulato)
 - [ ] **Confronto diretto** — Sovrapporre due corse sulla stessa distanza per vedere il progresso
-- [ ] **AI Coach migliorato** — Analisi contestuale con trend, confronto ultime corse, suggerimenti fase-specifici (senza dipendere da API esterna)
 
 ### Implementati
-- [x] **AI Coach con Claude** — Analisi corse con Claude (Anthropic) + fallback algoritmico avanzato
+- [x] **AI Coach con Gemini** — Analisi corse con Google Gemini (gratuito) + fallback algoritmico avanzato
+- [x] **Splits per km** — Visualizzazione passo per ogni km con barre colorate (negative/positive split)
+- [x] **Cadence trend** — Grafico andamento cadenza mensile con target 180 spm
+- [x] **Best Efforts** — Migliori prestazioni per distanza con passo, tempo e FC
 - [x] **Notifiche push VO2max/soglia** — Notifica automatica quando il VO2max migliora dopo sync Strava
 - [x] **Notifiche push giornaliere** — Reminder mattutino con la sessione del giorno
 - [x] **Grafico andamento VO2max** — Line chart nella sezione Progressi con storia VDOT
@@ -753,7 +762,7 @@ npx expo run:android
 - [x] **Pace & Race Predictor** — Calcolatore VDOT, previsioni gara (Riegel), convertitore passo
 - [x] **VDOT Paces API** — Endpoint `/vdot/paces` con i 5 passi di Daniels calcolati dal VDOT reale
 - [x] **EAS Updates (OTA)** — Aggiornamenti over-the-air configurati (`eas update` senza rebuild APK)
-- [x] **Logo MCorralejo** — Icona app con runner stilizzato + sfondo gradient (adaptive icon Android)
+- [x] **Logo Corralejo** — Icona app con runner stilizzato + sfondo gradient (adaptive icon Android)
 - [x] **Nome app** — "Corralejo 2026" (era "frontend")
 - [x] **Weekly Report push** — Riepilogo settimanale automatico: km fatti vs target, aderenza %, VDOT
 

@@ -19,6 +19,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 EMERGENT_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 STRAVA_CLIENT_ID = os.environ.get('STRAVA_CLIENT_ID', '')
 STRAVA_CLIENT_SECRET = os.environ.get('STRAVA_CLIENT_SECRET', '')
 STRAVA_INITIAL_ACCESS_TOKEN = os.environ.get('STRAVA_ACCESS_TOKEN', '')
@@ -1191,38 +1192,37 @@ CONTESTO SETTIMANA:
 
     response = None
 
-    # Try Google Gemini first (free tier)
+    # Try Google Gemini via REST API (no SDK needed)
     try:
-        gemini_key = os.environ.get('GEMINI_API_KEY', '')
-        if gemini_key:
-            import google.generativeai as genai
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel('gemini-2.0-flash')
-            gemini_response = model.generate_content(system_msg + "\n\n" + run_info)
-            response = gemini_response.text
-            logger.info("AI analysis generated via Google Gemini")
+        if GEMINI_API_KEY:
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+            gemini_payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": system_msg + "\n\n" + run_info}
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "maxOutputTokens": 2048,
+                    "temperature": 0.7,
+                }
+            }
+            async with httpx.AsyncClient(timeout=60) as http_ai:
+                gemini_resp = await http_ai.post(gemini_url, json=gemini_payload)
+                if gemini_resp.status_code == 200:
+                    gemini_data = gemini_resp.json()
+                    candidates = gemini_data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            response = parts[0].get("text", "")
+                            logger.info("AI analysis generated via Google Gemini REST API")
+                else:
+                    logger.warning(f"Gemini API error {gemini_resp.status_code}: {gemini_resp.text[:200]}")
     except Exception as e:
         logger.warning(f"Gemini AI unavailable: {e}")
-
-    # Try Claude AI as second option
-    if not response:
-        try:
-            import anthropic
-            ai_key = os.environ.get('ANTHROPIC_API_KEY', '')
-            if ai_key:
-                client_ai = anthropic.AsyncAnthropic(api_key=ai_key)
-                result = await client_ai.messages.create(
-                    model="claude-3-5-sonnet-20241022",
-                    max_tokens=1024,
-                    system=system_msg,
-                    messages=[
-                        {"role": "user", "content": run_info},
-                    ],
-                )
-                response = result.content[0].text
-                logger.info("AI analysis generated via Claude")
-        except Exception as e:
-            logger.warning(f"Claude AI unavailable: {e}")
 
     # Fallback: enhanced analysis without AI
     if not response:
@@ -3043,11 +3043,16 @@ async def get_best_efforts():
 
 @api_router.get("/cadence-history")
 async def get_cadence_history():
-    """Get monthly cadence averages for charting.
-    Groups runs by month, picks easy-pace runs, returns monthly avg cadence."""
+    """Get cadence data points for the Progressi chart.
+    Groups runs by month, picks 3-4 easy runs per month (avg_hr < 80% max_hr
+    or type contains easy/lenta), returns [{date, cadence_spm, pace, distance_km}]."""
+    MAX_HR = 180
+    HR_THRESHOLD = int(MAX_HR * 0.80)  # 144 bpm
+
     runs = await db.runs.find(
         {"avg_cadence": {"$exists": True, "$ne": None}},
-        {"_id": 0, "date": 1, "avg_cadence": 1, "avg_pace": 1, "run_type": 1}
+        {"_id": 0, "date": 1, "avg_cadence": 1, "avg_pace": 1, "avg_hr": 1,
+         "run_type": 1, "distance_km": 1}
     ).sort("date", 1).to_list(2000)
 
     if not runs:
@@ -3065,19 +3070,39 @@ async def get_cadence_history():
     cadence_history = []
     for month, month_runs in sorted(monthly.items()):
         # Prefer easy-pace runs for cadence trend (most consistent)
-        easy_runs = [r for r in month_runs if r.get("run_type") in ("corsa_lenta", "lungo", "easy")]
+        easy_runs = [
+            r for r in month_runs
+            if r.get("run_type") in ("corsa_lenta", "lungo", "easy")
+            or (r.get("avg_hr") and r["avg_hr"] < HR_THRESHOLD)
+        ]
         sample = easy_runs[:4] if easy_runs else month_runs[:4]
 
-        cadences = [r["avg_cadence"] for r in sample if r.get("avg_cadence")]
-        if cadences:
-            avg_cad = round(sum(cadences) / len(cadences))
-            cadence_history.append({
-                "month": month,
-                "avg_cadence": avg_cad,
-                "runs_count": len(cadences),
-            })
+        for r in sample:
+            if r.get("avg_cadence"):
+                cadence_history.append({
+                    "date": r.get("date", ""),
+                    "cadence_spm": r["avg_cadence"],
+                    "pace": r.get("avg_pace", ""),
+                    "distance_km": r.get("distance_km", 0),
+                })
 
     return {"cadence_history": cadence_history}
+
+
+@api_router.get("/runs/{run_id}/splits")
+async def get_run_splits(run_id: str):
+    """Return the per-km splits for a specific run."""
+    run = await db.runs.find_one({"id": run_id}, {"_id": 0, "id": 1, "date": 1, "splits": 1, "distance_km": 1, "avg_pace": 1})
+    if not run:
+        raise HTTPException(404, "Corsa non trovata")
+    splits = run.get("splits", [])
+    return {
+        "run_id": run_id,
+        "date": run.get("date", ""),
+        "distance_km": run.get("distance_km", 0),
+        "avg_pace": run.get("avg_pace", ""),
+        "splits": splits,
+    }
 
 
 async def update_personal_bests_and_medals():
