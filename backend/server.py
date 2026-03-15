@@ -983,7 +983,7 @@ async def get_run(run_id: str):
     run = await db.runs.find_one({"id": run_id}, {"_id": 0})
     if not run:
         raise HTTPException(404, "Corsa non trovata")
-    analysis = await db.ai_analyses.find_one({"run_id": run_id}, {"_id": 0})
+    analysis = await db.ai_analyses.find_one({"run_id": run_id}, {"_id": 0}, sort=[("created_at", -1)])
 
     # Find planned session for this run's date
     planned_session = None
@@ -1232,11 +1232,18 @@ CONTESTO SETTIMANA:
     # Fallback: enhanced analysis without AI
     if not response:
         response = _generate_enhanced_analysis(run, planned_session, planned_week, profile, vdot_val, vdot_paces, recent_runs)
+        logger.info("AI analysis generated via fallback template (Gemini unavailable)")
+
+    ai_source = "gemini" if response and not response.startswith("**Analisi corsa") else "fallback"
+
+    # Delete any previous analysis for this run so the new one is always used
+    await db.ai_analyses.delete_many({"run_id": req.run_id})
 
     analysis_doc = {
         "id": make_id(),
         "run_id": req.run_id,
         "analysis": response,
+        "ai_source": ai_source,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.ai_analyses.insert_one(analysis_doc)
@@ -1912,14 +1919,14 @@ async def get_analytics():
         if len(entry) > 1:  # has at least one zone
             pace_progression.append(entry)
 
-    # ---- VO2max history (computed dynamically from validated efforts, 2026+ only) ----
+    # ---- VO2max history (computed dynamically from validated efforts, ALL runs) ----
     # Shows every validated effort's VDOT to track true progression
     # ---- VO2max history: group by week, pick best effort per week ----
     # This avoids showing every single run and gives a cleaner progression
     vo2max_history = []
     running_best_vdot = None
     weekly_vdot = {}
-    for r in sorted(post_injury_runs, key=lambda x: x.get("date", "")):
+    for r in sorted(valid_runs, key=lambda x: x.get("date", "")):
         dist = r.get("distance_km", 0)
         dur = r.get("duration_minutes", 0)
         if dist < 3 or dur <= 0:

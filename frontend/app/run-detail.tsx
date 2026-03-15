@@ -601,9 +601,25 @@ export default function RunDetailScreen() {
           {analysis ? (
             <View style={styles.aiCard}>
               <Text style={styles.aiText}>{analysis.analysis}</Text>
-              <Text style={styles.aiDate}>
-                Analizzata il {formatDateTime(analysis.created_at)}
-              </Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SPACING.sm }}>
+                <Text style={styles.aiDate}>
+                  {formatDateTime(analysis.created_at)}{analysis.ai_source === 'gemini' ? ' • Gemini AI' : analysis.ai_source === 'fallback' ? ' • Analisi algoritmica' : ''}
+                </Text>
+                <TouchableOpacity
+                  onPress={requestAnalysis}
+                  disabled={analyzing}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.lime + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}
+                >
+                  {analyzing ? (
+                    <ActivityIndicator size="small" color={COLORS.lime} />
+                  ) : (
+                    <>
+                      <Ionicons name="refresh" size={14} color={COLORS.lime} />
+                      <Text style={{ fontSize: 10, color: COLORS.lime, fontWeight: '700' }}>RIGENERA</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           ) : (
             <TouchableOpacity
