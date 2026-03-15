@@ -748,8 +748,6 @@ npx expo run:android
 - [ ] **Shoe tracker** — km per scarpa da Strava, alert a 600km per cambio
 - [ ] **Elevation gain tracking** — Dislivello settimanale (utile per Fuerteventura, terreno ondulato)
 - [ ] **Confronto diretto** — Sovrapporre due corse sulla stessa distanza per vedere il progresso
-- [ ] **Decoupling cardiaco (Pa:Hr)** — Confronto pace/HR prima vs seconda metà corsa (Friel)
-- [ ] **Distribuzione zone HR** — Grafico a torta % tempo in Z1-Z5, verifica training polarizzato
 - [ ] **Heatmap settimane** — Calendario stile GitHub con colori per km/giorno
 - [ ] **Race Pace Simulator** — Previsione HR a un dato passo gara basata sui dati reali
 - [ ] **Negative Split Planner** — Piano gara km per km con strategia pacing
@@ -757,6 +755,8 @@ npx expo run:android
 - [ ] **Meteo pre-corsa** — Aggiustamento paci target in base a temperatura e umidità
 
 ### Implementati
+- [x] **Decoupling cardiaco (Pa:Hr)** — Drift FC tra 1ª e 2ª metà corsa (Friel). Solo su corse a passo costante (CV<10%). Verde <3.5%, arancione 3.5-5%, rosso >5%
+- [x] **Distribuzione zone HR** — Barre Z1-Z5 ultime 4 settimane con Polarization Score e badge 80/20 (Seiler 2010)
 - [x] **Auto-sync Strava** — Sincronizzazione automatica all'apertura app (grafici sempre aggiornati)
 - [x] **AI Coach "Renato Canova"** — Analisi corse con Google Gemini come allenatore di fama mondiale, tono naturale, mai template, calcola settimane alla gara, conosce profilo atleta
 - [x] **Best Efforts con medaglie** — 🥇🥈🥉 per i record personali con push notification su nuovo PR
