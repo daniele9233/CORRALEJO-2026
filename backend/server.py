@@ -2985,6 +2985,7 @@ async def get_strava_activities(per_page: int = 200):
                         "max_hr": a.get("max_heartrate"),
                         "elevation_gain": a.get("total_elevation_gain"),
                         "avg_cadence": a.get("average_cadence"),  # Strava gives half-cadence (one foot)
+                        "start_time": a.get("start_date_local", "")[11:16],  # HH:MM
                     })
 
                 if len(raw) < per_page:
@@ -3124,6 +3125,7 @@ async def sync_strava_activities():
     vdot_update = None
     if synced > 0 or matched > 0:
         await update_personal_bests_and_medals()
+        await compute_badges()
         # ---- AUTO RECALCULATE VDOT ----
         try:
             vdot_update = await auto_recalculate_vdot()
@@ -3953,6 +3955,531 @@ async def update_personal_bests_and_medals():
         await db.profile.update_one({}, {"$set": {"pbs": new_pbs}})
     
     logger.info(f"Updated {len(new_pbs)} personal bests after sync")
+
+
+# ======== BADGE & TROPHY SYSTEM (46 badges) ========
+
+BADGE_DEFINITIONS = [
+    # -- Distance milestones --
+    {"id": "dist_100", "name": "Principiante dei 100 km", "cat": "distance", "cat_label": "🏃‍♂️ Milestone di distanza", "desc": "Raggiungi 100 km totali corsi", "icon": "🏃", "target": 100},
+    {"id": "dist_500", "name": "Esploratore dei 500 km", "cat": "distance", "cat_label": "🏃‍♂️ Milestone di distanza", "desc": "Raggiungi 500 km totali", "icon": "🗺️", "target": 500},
+    {"id": "dist_1000", "name": "Maratoneta dei 1000 km", "cat": "distance", "cat_label": "🏃‍♂️ Milestone di distanza", "desc": "Raggiungi 1000 km totali", "icon": "🏅", "target": 1000},
+    {"id": "dist_2500", "name": "Leggenda dei 2500 km", "cat": "distance", "cat_label": "🏃‍♂️ Milestone di distanza", "desc": "Raggiungi 2500 km totali", "icon": "🌟", "target": 2500},
+    {"id": "dist_5000", "name": "Ultras dei 5000 km", "cat": "distance", "cat_label": "🏃‍♂️ Milestone di distanza", "desc": "Raggiungi 5000 km totali", "icon": "⚡", "target": 5000},
+    {"id": "dist_world", "name": "Giro del mondo", "cat": "distance", "cat_label": "🏃‍♂️ Milestone di distanza", "desc": "40.075 km — la circonferenza terrestre", "icon": "🌍", "target": 40075},
+    # -- Consistency --
+    {"id": "week_perfect", "name": "Settimana perfetta", "cat": "consistency", "cat_label": "📅 Costanza e aderenza", "desc": "Completa tutte le sessioni di una settimana", "icon": "✅", "target": 1},
+    {"id": "month_gold", "name": "Mese d'oro", "cat": "consistency", "cat_label": "📅 Costanza e aderenza", "desc": "Completa tutte le sessioni di un mese (4 settimane)", "icon": "🥇", "target": 1},
+    {"id": "loyalty_3m", "name": "Fedeltà assoluta", "cat": "consistency", "cat_label": "📅 Costanza e aderenza", "desc": "3 mesi consecutivi senza saltare una sessione", "icon": "💎", "target": 12},
+    {"id": "unstoppable_6m", "name": "Runner instancabile", "cat": "consistency", "cat_label": "📅 Costanza e aderenza", "desc": "6 mesi consecutivi di aderenza ≥90%", "icon": "🔥", "target": 24},
+    {"id": "year_365", "name": "365 giorni di corsa", "cat": "consistency", "cat_label": "📅 Costanza e aderenza", "desc": "Corri almeno una volta a settimana per un anno", "icon": "📆", "target": 52},
+    {"id": "early_bird", "name": "Sveglia presto", "cat": "consistency", "cat_label": "📅 Costanza e aderenza", "desc": "Completa 50 corse mattutine (prima delle 8:00)", "icon": "🌅", "target": 50},
+    {"id": "night_runner", "name": "Notturno", "cat": "consistency", "cat_label": "📅 Costanza e aderenza", "desc": "Completa 30 corse dopo le 20:00", "icon": "🌙", "target": 30},
+    # -- Personal improvements --
+    {"id": "vdot_plus1", "name": "Primo miglioramento VDOT", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "Aumenta il tuo VDOT di 1 punto", "icon": "📈", "target": 1},
+    {"id": "vdot_plus3", "name": "Salto di qualità", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "Aumenta il VDOT di 3 punti", "icon": "🚀", "target": 3},
+    {"id": "vdot_plus5", "name": "Elite in arrivo", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "Aumenta il VDOT di 5 punti", "icon": "👑", "target": 5},
+    {"id": "vdot_50", "name": "Il Discepolo di Jack", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "Raggiunto un VDOT di 50", "icon": "🎓", "target": 50},
+    {"id": "pb_5k", "name": "Record personale (5K)", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "Stabilisci un nuovo PB sui 5 km", "icon": "🏆", "target": 1},
+    {"id": "pb_10k", "name": "Record personale (10K)", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "PB sui 10 km", "icon": "🏆", "target": 1},
+    {"id": "pb_half", "name": "Record personale (Mezza)", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "PB sulla mezza maratona", "icon": "🏆", "target": 1},
+    {"id": "double_pb", "name": "Doppio record", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "Migliora due distanze diverse nello stesso mese", "icon": "🎯", "target": 1},
+    {"id": "sub50_10k", "name": "Sotto i 50 minuti nei 10K", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "Corri 10 km in meno di 50 minuti", "icon": "⏱️", "target": 1},
+    {"id": "sub430_pace", "name": "Sotto le 4:30/km", "cat": "improvement", "cat_label": "📈 Miglioramenti personali", "desc": "Passo medio ≤4:30/km su distanza ≥5 km", "icon": "💨", "target": 1},
+    # -- Training types --
+    {"id": "interval_king", "name": "Re delle ripetute", "cat": "training", "cat_label": "🏋️ Tipi di allenamento", "desc": "Completa 20 sessioni di ripetute", "icon": "👑", "target": 20},
+    {"id": "long_run_master", "name": "Maratoneta del lungo", "cat": "training", "cat_label": "🏋️ Tipi di allenamento", "desc": "Completa 10 corse lunghe (>15 km)", "icon": "🛤️", "target": 10},
+    {"id": "climber", "name": "Scalatore", "cat": "training", "cat_label": "🏋️ Tipi di allenamento", "desc": "Completa 10 sessioni con >100m di dislivello", "icon": "⛰️", "target": 10},
+    {"id": "progressive_perfect", "name": "Progressivo perfetto", "cat": "training", "cat_label": "🏋️ Tipi di allenamento", "desc": "Completa 15 corse progressive", "icon": "📊", "target": 15},
+    {"id": "strength", "name": "Forza e potenza", "cat": "training", "cat_label": "🏋️ Tipi di allenamento", "desc": "Completa 50 sessioni di rinforzo muscolare", "icon": "💪", "target": 50},
+    {"id": "cross_trainer", "name": "Cross trainer", "cat": "training", "cat_label": "🏋️ Tipi di allenamento", "desc": "Completa 20 sessioni di cross-training", "icon": "🚴", "target": 20},
+    # -- Half marathon goals --
+    {"id": "hm_ready_18", "name": "Pronto per la mezza", "cat": "half_marathon", "cat_label": "🎯 Obiettivi mezza maratona", "desc": "Completa il primo lungo da 18 km", "icon": "🎯", "target": 1},
+    {"id": "hm_race_pace", "name": "Ritmo gara", "cat": "half_marathon", "cat_label": "🎯 Obiettivi mezza maratona", "desc": "Corri 10 km al passo obiettivo (4:30/km)", "icon": "⏱️", "target": 1},
+    {"id": "hm_plan_done", "name": "Piano rispettato", "cat": "half_marathon", "cat_label": "🎯 Obiettivi mezza maratona", "desc": "Completa la fase di preparazione specifica (sett. 23-30)", "icon": "📋", "target": 1},
+    {"id": "hm_taper", "name": "Tapering perfetto", "cat": "half_marathon", "cat_label": "🎯 Obiettivi mezza maratona", "desc": "Segui alla lettera le ultime 3 settimane di scarico", "icon": "🧘", "target": 1},
+    {"id": "hm_race_day", "name": "Giorno di gara", "cat": "half_marathon", "cat_label": "🎯 Obiettivi mezza maratona", "desc": "Badge sbloccato il giorno della mezza maratona", "icon": "🏁", "target": 1},
+    {"id": "hm_goal_hit", "name": "Obiettivo centrato!", "cat": "half_marathon", "cat_label": "🎯 Obiettivi mezza maratona", "desc": "Raggiungi il tempo di 1:35:00 alla gara", "icon": "🥇", "target": 1},
+    # -- Science & analysis --
+    {"id": "zone_ideal", "name": "Zona ideale", "cat": "science", "cat_label": "🧠 Analisi e scienza", "desc": "80% corse in zona Easy (80/20) per un mese", "icon": "🎯", "target": 1},
+    {"id": "aero_efficiency", "name": "Efficienza aerobica", "cat": "science", "cat_label": "🧠 Analisi e scienza", "desc": "Decoupling medio <5% su 5 corse lunghe", "icon": "❤️", "target": 1},
+    {"id": "interval_detect", "name": "Rilevatore di ripetute", "cat": "science", "cat_label": "🧠 Analisi e scienza", "desc": "Corsa classificata come ripetute (CV>15%)", "icon": "🔍", "target": 1},
+    {"id": "low_injury_risk", "name": "Injury Risk basso", "cat": "science", "cat_label": "🧠 Analisi e scienza", "desc": "Injury risk <30 per 4 settimane consecutive", "icon": "🛡️", "target": 1},
+    {"id": "cadence_180", "name": "Cadenza Reale", "cat": "science", "cat_label": "🧠 Analisi e scienza", "desc": "Media ≥180 spm in una corsa di almeno 10 km", "icon": "🦶", "target": 1},
+    # -- Speed flash --
+    {"id": "flash_400", "name": "Lampo di 400 m", "cat": "speed", "cat_label": "💨 Velocità lampo", "desc": "400 m a passo < 3:05/km (tempo < 1:14)", "icon": "⚡", "target": 74},
+    {"id": "flash_200", "name": "Fulmine sui 200 m", "cat": "speed", "cat_label": "💨 Velocità lampo", "desc": "200 m a passo < 2:45/km (tempo < 0:33)", "icon": "⚡", "target": 33},
+    {"id": "flash_800", "name": "Folata sugli 800 m", "cat": "speed", "cat_label": "💨 Velocità lampo", "desc": "800 m a passo < 3:15/km (tempo < 2:36)", "icon": "💨", "target": 156},
+    {"id": "flash_1000", "name": "Schizzo di 1 km", "cat": "speed", "cat_label": "💨 Velocità lampo", "desc": "1000 m a passo < 3:20/km (tempo < 3:20)", "icon": "💨", "target": 200},
+    {"id": "flash_1500", "name": "Tuono sui 1500 m", "cat": "speed", "cat_label": "💨 Velocità lampo", "desc": "1500 m a passo < 3:30/km (tempo < 5:15)", "icon": "🌩️", "target": 315},
+    {"id": "flash_2000", "name": "Tempesta sui 2 km", "cat": "speed", "cat_label": "💨 Velocità lampo", "desc": "2000 m a passo < 3:35/km (tempo < 7:10)", "icon": "🌪️", "target": 430},
+    {"id": "flash_2500", "name": "Uragano sui 2.5 km", "cat": "speed", "cat_label": "💨 Velocità lampo", "desc": "2500 m a passo < 3:38/km (tempo < 9:05)", "icon": "🌪️", "target": 545},
+    {"id": "flash_3000", "name": "Ciclone sui 3 km", "cat": "speed", "cat_label": "💨 Velocità lampo", "desc": "3000 m a passo < 3:40/km (tempo < 11:00)", "icon": "🌀", "target": 660},
+]
+
+
+async def compute_badges() -> list:
+    """Compute all 46 badge statuses. Returns list of badge status dicts."""
+    import math
+    from datetime import date as dt_date
+
+    runs = await db.runs.find({}, {"_id": 0}).sort("date", 1).to_list(5000)
+    profile = await db.profile.find_one({}, {"_id": 0}) or {}
+    best_efforts_docs = await db.best_efforts.find({}, {"_id": 0}).to_list(200)
+    vo2max_history = await db.vo2max_history.find({}, {"_id": 0}).sort("date", 1).to_list(500)
+    training_weeks = await db.training_plan.find({}, {"_id": 0}).sort("week_start", 1).to_list(200)
+
+    # Load existing badge states (for unlock dates)
+    existing = {}
+    for b in await db.badges.find({}, {"_id": 0}).to_list(100):
+        existing[b.get("id")] = b
+
+    # ---- Pre-compute aggregations ----
+    valid_runs = [r for r in runs if r.get("distance_km", 0) > 0.5]
+    total_km = round(sum(r.get("distance_km", 0) for r in valid_runs), 1)
+
+    # Runs by type
+    def _normalize_type(t):
+        if not t:
+            return "easy"
+        t = t.lower()
+        if "ripetut" in t or "interval" in t:
+            return "ripetute"
+        if "lungo" in t or "long" in t:
+            return "lungo"
+        if "progressiv" in t:
+            return "progressivo"
+        if "salita" in t or "hill" in t:
+            return "salita"
+        return t
+
+    type_counts = {}
+    for r in valid_runs:
+        rt = _normalize_type(r.get("run_type", ""))
+        type_counts[rt] = type_counts.get(rt, 0) + 1
+
+    long_runs = [r for r in valid_runs if r.get("distance_km", 0) > 15]
+    climb_runs = [r for r in valid_runs if (r.get("elevation_gain") or 0) > 100]
+
+    # Best efforts by distance name
+    best_efforts_map = {}
+    for be in best_efforts_docs:
+        name = be.get("distance_name", "")
+        best_efforts_map[name] = be
+
+    # VDOT data
+    current_vdot = profile.get("current_vdot") or 0
+    vdot_values = [v.get("vdot", 0) for v in vo2max_history if v.get("vdot")]
+    initial_vdot = vdot_values[0] if vdot_values else current_vdot
+    vdot_improvement = round(current_vdot - initial_vdot, 1) if initial_vdot else 0
+
+    # PB tracking from best_efforts - check if any PR exists
+    has_pb_5k = bool(best_efforts_map.get("5k", {}).get("pr_rank") == 1 or best_efforts_map.get("5k"))
+    has_pb_10k = bool(best_efforts_map.get("10k", {}).get("pr_rank") == 1 or best_efforts_map.get("10k"))
+    has_pb_half = bool(best_efforts_map.get("Half-Marathon", {}).get("pr_rank") == 1 or best_efforts_map.get("Half-Marathon"))
+
+    # Check for double PB in same month
+    double_pb_month = False
+    pb_months = {}
+    for be in best_efforts_docs:
+        if be.get("pr_rank") == 1 and be.get("run_date"):
+            month_key = be["run_date"][:7]
+            dist_name = be.get("distance_name", "")
+            if month_key not in pb_months:
+                pb_months[month_key] = set()
+            pb_months[month_key].add(dist_name)
+    for dists in pb_months.values():
+        if len(dists) >= 2:
+            double_pb_month = True
+            break
+
+    # Sub 50min 10K
+    be_10k = best_efforts_map.get("10k")
+    sub50_10k = False
+    if be_10k:
+        t = be_10k.get("elapsed_time", 9999)
+        sub50_10k = t < 3000  # 50 * 60
+
+    # Sub 4:30/km on >= 5km
+    def _pace_secs(p):
+        if not p or ':' not in p:
+            return 9999
+        try:
+            parts = p.split(':')
+            return int(parts[0]) * 60 + int(parts[1])
+        except:
+            return 9999
+
+    sub430 = False
+    for r in valid_runs:
+        if r.get("distance_km", 0) >= 5:
+            ps = _pace_secs(r.get("avg_pace", ""))
+            if ps <= 270:  # 4:30 = 270s
+                sub430 = True
+                break
+
+    # Plan adherence
+    perfect_weeks = 0
+    consecutive_perfect = 0
+    max_consecutive_perfect = 0
+    consecutive_90pct = 0
+    max_consecutive_90pct = 0
+
+    for week in training_weeks:
+        sessions = week.get("sessions", [])
+        if not sessions:
+            continue
+        non_rest = [s for s in sessions if s.get("type") != "riposo"]
+        if not non_rest:
+            continue
+        completed = sum(1 for s in non_rest if s.get("completed"))
+        total = len(non_rest)
+        pct = completed / total if total > 0 else 0
+
+        if pct >= 1.0:
+            perfect_weeks += 1
+            consecutive_perfect += 1
+            max_consecutive_perfect = max(max_consecutive_perfect, consecutive_perfect)
+        else:
+            consecutive_perfect = 0
+
+        if pct >= 0.9:
+            consecutive_90pct += 1
+            max_consecutive_90pct = max(max_consecutive_90pct, consecutive_90pct)
+        else:
+            consecutive_90pct = 0
+
+    # Weeks with at least 1 run (for 365 days badge)
+    run_weeks = set()
+    for r in valid_runs:
+        d = r.get("date", "")
+        if d:
+            try:
+                rd = dt_date.fromisoformat(d[:10])
+                iso = rd.isocalendar()
+                run_weeks.add((iso[0], iso[1]))
+            except:
+                pass
+    consecutive_run_weeks = 0
+    max_consecutive_run_weeks = 0
+    if run_weeks:
+        sorted_weeks = sorted(run_weeks)
+        consecutive_run_weeks = 1
+        max_consecutive_run_weeks = 1
+        for i in range(1, len(sorted_weeks)):
+            prev_y, prev_w = sorted_weeks[i-1]
+            cur_y, cur_w = sorted_weeks[i]
+            # Check if consecutive week
+            prev_date = dt_date.fromisocalendar(prev_y, prev_w, 1)
+            cur_date = dt_date.fromisocalendar(cur_y, cur_w, 1)
+            if (cur_date - prev_date).days == 7:
+                consecutive_run_weeks += 1
+            else:
+                consecutive_run_weeks = 1
+            max_consecutive_run_weeks = max(max_consecutive_run_weeks, consecutive_run_weeks)
+
+    # Morning/night runs (from start_time if available)
+    morning_runs = 0
+    night_runs = 0
+    for r in valid_runs:
+        st = r.get("start_time", "")
+        if st:
+            try:
+                hour = int(st.split(":")[0])
+                if hour < 8:
+                    morning_runs += 1
+                if hour >= 20:
+                    night_runs += 1
+            except:
+                pass
+
+    # Has run >= 18km
+    has_18km = any(r.get("distance_km", 0) >= 18 for r in valid_runs)
+
+    # Race pace: 10km at ~4:30/km (270s +/- 10s tolerance)
+    has_race_pace = False
+    for r in valid_runs:
+        d = r.get("distance_km", 0)
+        if 9.5 <= d <= 10.5:
+            ps = _pace_secs(r.get("avg_pace", ""))
+            if ps <= 275:  # 4:35 tolerance
+                has_race_pace = True
+                break
+
+    # Plan specific weeks done
+    spec_weeks_done = 0
+    for w in training_weeks:
+        wn = w.get("week_number", 0)
+        if 23 <= wn <= 30:
+            sessions = w.get("sessions", [])
+            non_rest = [s for s in sessions if s.get("type") != "riposo"]
+            if non_rest and all(s.get("completed") for s in non_rest):
+                spec_weeks_done += 1
+
+    # Taper weeks
+    taper_weeks_done = 0
+    for w in training_weeks:
+        phase = (w.get("phase") or "").lower()
+        if "taper" in phase or "scarico" in phase:
+            sessions = w.get("sessions", [])
+            non_rest = [s for s in sessions if s.get("type") != "riposo"]
+            if non_rest and all(s.get("completed") for s in non_rest):
+                taper_weeks_done += 1
+
+    # Race day badge
+    race_date = profile.get("race_date", "")
+    is_race_day = race_date and race_date <= dt_date.today().isoformat()
+
+    # Goal hit: HM under 1:35:00 = 95 min
+    hm_goal_hit = False
+    be_hm = best_efforts_map.get("Half-Marathon")
+    if be_hm:
+        hm_time = be_hm.get("elapsed_time", 9999)
+        if hm_time <= 5700:  # 95 min
+            hm_goal_hit = True
+
+    # Cadence >= 180 on 10km+ run (Strava gives half-cadence, app doubles it)
+    has_cadence_180 = False
+    for r in valid_runs:
+        if r.get("distance_km", 0) >= 10:
+            cad = r.get("avg_cadence")
+            if cad and cad >= 180:
+                has_cadence_180 = True
+                break
+
+    # CV > 15% detection (interval detection)
+    has_cv_detected = False
+    for r in valid_runs:
+        splits = r.get("splits", [])
+        if len(splits) >= 3:
+            paces = [_pace_secs(s.get("pace", "")) for s in splits if _pace_secs(s.get("pace", "")) < 9000]
+            if paces:
+                avg_p = sum(paces) / len(paces)
+                if avg_p > 0:
+                    variance = sum((p - avg_p) ** 2 for p in paces) / len(paces)
+                    cv = (math.sqrt(variance) / avg_p) * 100
+                    if cv > 15:
+                        has_cv_detected = True
+                        break
+
+    # Speed flash badges - check best_efforts for specific distances
+    # Map: badge_id -> (distance_name_in_best_efforts, target_seconds)
+    speed_map = {
+        "flash_400": ("400m", 74),
+        "flash_200": ("200m", 33),    # May not be in Strava best efforts
+        "flash_800": ("1/2 mile", 156),  # 800m ~ half mile, Strava tracks "1/2 mile" = 804m
+        "flash_1000": ("1k", 200),
+        "flash_1500": ("1 mile", 315),   # 1500m ~ 1 mile (1609m), approximate
+        "flash_2000": ("2 mile", 430),   # 2km approx
+        "flash_2500": ("2 mile", 545),   # 2.5km - use 2 mile as proxy
+        "flash_3000": ("5k", 660),       # 3km - no direct Strava equivalent
+    }
+
+    # ---- Build results ----
+    today = dt_date.today().isoformat()
+    results = []
+
+    for bd in BADGE_DEFINITIONS:
+        bid = bd["id"]
+        unlocked = False
+        progress = 0
+        target = bd.get("target", 1)
+
+        # ---- DISTANCE MILESTONES ----
+        if bid.startswith("dist_"):
+            progress = total_km
+            unlocked = total_km >= target
+
+        # ---- CONSISTENCY ----
+        elif bid == "week_perfect":
+            progress = perfect_weeks
+            unlocked = perfect_weeks >= 1
+        elif bid == "month_gold":
+            progress = max_consecutive_perfect
+            target = 4
+            unlocked = max_consecutive_perfect >= 4
+        elif bid == "loyalty_3m":
+            progress = max_consecutive_perfect
+            target = 12
+            unlocked = max_consecutive_perfect >= 12
+        elif bid == "unstoppable_6m":
+            progress = max_consecutive_90pct
+            target = 24
+            unlocked = max_consecutive_90pct >= 24
+        elif bid == "year_365":
+            progress = max_consecutive_run_weeks
+            unlocked = max_consecutive_run_weeks >= 52
+        elif bid == "early_bird":
+            progress = morning_runs
+            unlocked = morning_runs >= 50
+        elif bid == "night_runner":
+            progress = night_runs
+            unlocked = night_runs >= 30
+
+        # ---- IMPROVEMENTS ----
+        elif bid == "vdot_plus1":
+            progress = round(max(0, vdot_improvement), 1)
+            unlocked = vdot_improvement >= 1
+        elif bid == "vdot_plus3":
+            progress = round(max(0, vdot_improvement), 1)
+            unlocked = vdot_improvement >= 3
+        elif bid == "vdot_plus5":
+            progress = round(max(0, vdot_improvement), 1)
+            unlocked = vdot_improvement >= 5
+        elif bid == "vdot_50":
+            progress = current_vdot
+            unlocked = current_vdot >= 50
+        elif bid == "pb_5k":
+            progress = 1 if has_pb_5k else 0
+            unlocked = has_pb_5k
+        elif bid == "pb_10k":
+            progress = 1 if has_pb_10k else 0
+            unlocked = has_pb_10k
+        elif bid == "pb_half":
+            progress = 1 if has_pb_half else 0
+            unlocked = has_pb_half
+        elif bid == "double_pb":
+            progress = 1 if double_pb_month else 0
+            unlocked = double_pb_month
+        elif bid == "sub50_10k":
+            progress = 1 if sub50_10k else 0
+            unlocked = sub50_10k
+        elif bid == "sub430_pace":
+            progress = 1 if sub430 else 0
+            unlocked = sub430
+
+        # ---- TRAINING TYPES ----
+        elif bid == "interval_king":
+            progress = type_counts.get("ripetute", 0)
+            unlocked = progress >= 20
+        elif bid == "long_run_master":
+            progress = len(long_runs)
+            unlocked = progress >= 10
+        elif bid == "climber":
+            progress = len(climb_runs)
+            unlocked = progress >= 10
+        elif bid == "progressive_perfect":
+            progress = type_counts.get("progressivo", 0)
+            unlocked = progress >= 15
+        elif bid == "strength":
+            progress = 0  # No exercise tracking in runs yet
+            unlocked = False
+        elif bid == "cross_trainer":
+            progress = 0  # No cross-training tracking yet
+            unlocked = False
+
+        # ---- HALF MARATHON GOALS ----
+        elif bid == "hm_ready_18":
+            progress = 1 if has_18km else 0
+            unlocked = has_18km
+        elif bid == "hm_race_pace":
+            progress = 1 if has_race_pace else 0
+            unlocked = has_race_pace
+        elif bid == "hm_plan_done":
+            progress = spec_weeks_done
+            target = 8
+            unlocked = spec_weeks_done >= 8
+        elif bid == "hm_taper":
+            progress = taper_weeks_done
+            target = 3
+            unlocked = taper_weeks_done >= 3
+        elif bid == "hm_race_day":
+            progress = 1 if is_race_day else 0
+            unlocked = is_race_day
+        elif bid == "hm_goal_hit":
+            progress = 1 if hm_goal_hit else 0
+            unlocked = hm_goal_hit
+
+        # ---- SCIENCE ----
+        elif bid == "zone_ideal":
+            # Check if current polarization >= 80% (from analytics)
+            progress = 0
+            unlocked = False  # Will be computed via analytics
+        elif bid == "aero_efficiency":
+            progress = 0
+            unlocked = False  # Needs decoupling history analysis
+        elif bid == "interval_detect":
+            progress = 1 if has_cv_detected else 0
+            unlocked = has_cv_detected
+        elif bid == "low_injury_risk":
+            progress = 0
+            unlocked = False  # Needs injury risk history
+        elif bid == "cadence_180":
+            progress = 1 if has_cadence_180 else 0
+            unlocked = has_cadence_180
+
+        # ---- SPEED FLASH ----
+        elif bid.startswith("flash_"):
+            sm = speed_map.get(bid)
+            if sm:
+                dist_name, target_secs = sm
+                be = best_efforts_map.get(dist_name)
+                if be:
+                    elapsed = be.get("elapsed_time", 9999)
+                    progress = elapsed
+                    unlocked = elapsed <= target_secs
+                    target = target_secs
+                else:
+                    progress = 0
+
+        # Preserve unlock date or set it
+        prev = existing.get(bid, {})
+        unlock_date = prev.get("unlocked_date")
+        if unlocked and not unlock_date:
+            unlock_date = today
+        elif not unlocked:
+            unlock_date = None
+
+        results.append({
+            "id": bid,
+            "name": bd["name"],
+            "cat": bd["cat"],
+            "cat_label": bd["cat_label"],
+            "desc": bd["desc"],
+            "icon": bd["icon"],
+            "target": target,
+            "progress": progress,
+            "unlocked": unlocked,
+            "unlocked_date": unlock_date,
+        })
+
+    # Save to DB (upsert each badge)
+    for r in results:
+        await db.badges.update_one(
+            {"id": r["id"]},
+            {"$set": r},
+            upsert=True
+        )
+
+    return results
+
+
+@api_router.get("/badges")
+async def get_badges():
+    """Return all 46 badges with their current status."""
+    try:
+        badges = await compute_badges()
+    except Exception as e:
+        logger.error(f"Badge compute error: {e}")
+        badges = await db.badges.find({}, {"_id": 0}).to_list(100)
+
+    # Group by category
+    categories = {}
+    total_unlocked = 0
+    for b in badges:
+        cat = b["cat"]
+        if cat not in categories:
+            categories[cat] = {"label": b["cat_label"], "badges": []}
+        categories[cat]["badges"].append(b)
+        if b.get("unlocked"):
+            total_unlocked += 1
+
+    return {
+        "badges": badges,
+        "categories": categories,
+        "total": len(badges),
+        "unlocked": total_unlocked,
+    }
 
 
 async def auto_adapt_plan():

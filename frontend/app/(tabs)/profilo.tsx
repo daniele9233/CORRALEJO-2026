@@ -308,6 +308,27 @@ export default function ProfiloScreen() {
 
         {activeTab === 'medaglie' && (
           <>
+            {/* Badge e Trofei link */}
+            <TouchableOpacity
+              onPress={() => router.push('/badges')}
+              style={{
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                backgroundColor: '#f9731610', borderRadius: BORDER_RADIUS.md,
+                padding: SPACING.lg, marginBottom: SPACING.lg,
+                borderWidth: 1, borderColor: '#f9731640',
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.md }}>
+                <Text style={{ fontSize: 28 }}>🏆</Text>
+                <View>
+                  <Text style={{ fontSize: FONT_SIZES.body, fontWeight: '900', color: COLORS.text }}>Badge e Trofei</Text>
+                  <Text style={{ fontSize: FONT_SIZES.xs, color: COLORS.textMuted }}>46 badge da sbloccare</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#f97316" />
+            </TouchableOpacity>
+
             <Text style={styles.introText}>Sistema medaglie a 6 livelli: Warm-up, Bronzo, Argento, Oro, Platino, Elite</Text>
             {Object.entries(medals).map(([dist, medal]: [string, any]) => {
               const status = medal.status || 'locked';

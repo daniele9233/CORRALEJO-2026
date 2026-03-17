@@ -62,4 +62,5 @@ export const api = {
   getDecouplingHistory: () => apiFetch('/decoupling-history'),
   getPredictionHistory: () => apiFetch('/prediction-history'),
   getBestEfforts: () => apiFetch('/best-efforts'),
+  getBadges: () => apiFetch('/badges'),
 };

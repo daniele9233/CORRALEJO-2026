@@ -359,7 +359,20 @@ Storico evoluzione prestazioni:
 - **Previsioni gara (VDOT Daniels)**: 5km, 10km, 21.1km, 42.2km basate su VDOT calcolato da sforzi validati (HR ≥82% max). Grafico storico interattivo (touch/drag con tooltip data+pace+VDOT), filtri per periodo (Oggi/1M/3M/6M), tabs distanza, frecce trend miglioramento/peggioramento, rolling window 8 settimane. Usa `predict_time_from_vdot()` con ricerca binaria su formula Daniels (non più Riegel su avg_pace)
 - **Best efforts**: migliori prestazioni per distanza con passo e FC
 
-### 12. 🧮 Calcolatore
+### 12. 🏆 Badge e Trofei
+Sistema gamification con 46 badge in 7 categorie:
+- **🏃‍♂️ Milestone distanza** (6): da 100km a Giro del mondo (40.075km)
+- **📅 Costanza** (7): Settimana perfetta, Mese d'oro, Fedeltà, Runner instancabile, 365 giorni, Sveglia presto, Notturno
+- **📈 Miglioramenti** (10): VDOT +1/+3/+5, VDOT 50, PB 5K/10K/Mezza, Doppio record, Sub 50min 10K, Sub 4:30/km
+- **🏋️ Allenamento** (6): Re ripetute, Lungo, Scalatore, Progressivo, Forza, Cross-training
+- **🎯 Mezza maratona** (6): 18km, Ritmo gara, Piano rispettato, Tapering, Giorno gara, Obiettivo centrato
+- **🧠 Scienza** (5): Zona ideale 80/20, Efficienza aerobica, Rilevatore ripetute, Injury Risk, Cadenza 180
+- **💨 Velocità lampo** (8): 400m → 3km con soglie passo specifiche
+
+Schermata dedicata (`badges.tsx`) accessibile da Profilo → Medaglie, con progress bar, categorie espandibili, stati locked/unlocked.
+Ricalcolo automatico dopo ogni sync Strava.
+
+### 13. 🧮 Calcolatore
 Strumenti di calcolo per il runner:
 - **Passi da VDOT**: mostra VDOT corrente e i 5 passi di Daniels
 - **Previsioni gara** (VDOT Daniels + Riegel): inserisci un PB e predice gli altri tempi
@@ -503,6 +516,7 @@ Base URL: `https://corralejo-backend.onrender.com/api`
 | GET | `/best-efforts` | Migliori prestazioni per distanza |
 | GET | `/runs/{run_id}/splits` | Splits per km di una corsa specifica |
 | GET | `/decoupling-history` | Storico decoupling cardiaco settimanale (solo corse steady, CV<10%) |
+| GET | `/badges` | 46 badge gamification con progresso, stato unlock, categorie |
 
 ### AI
 | Metodo | Endpoint | Descrizione |
@@ -787,6 +801,7 @@ npx expo run:android
 - [x] **Logo Corralejo** — Icona app con runner stilizzato + sfondo gradient (adaptive icon Android)
 - [x] **Nome app** — "Corralejo 2026" (era "frontend")
 - [x] **Weekly Report push** — Riepilogo settimanale automatico: km fatti vs target, aderenza %, VDOT
+- [x] **Badge e Trofei (46 badge)** — Sistema gamification completo con 46 badge in 7 categorie: Milestone distanza (6), Costanza (7), Miglioramenti VDOT/PB (10), Tipi allenamento (6), Obiettivi mezza maratona (6), Analisi scienza (5), Velocità lampo (8). Schermata dedicata con progress bar, categorie espandibili, sbloccati/bloccati. Calcolo automatico dopo sync Strava. Endpoint `GET /api/badges`
 
 ---
 
