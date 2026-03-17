@@ -3641,6 +3641,133 @@ async def get_decoupling_history():
     return {"decoupling_history": decoupling_history}
 
 
+@api_router.get("/prediction-history")
+async def get_prediction_history():
+    """
+    Returns race prediction history over time.
+    For each run (chronologically from 2026), recalculates what the predicted
+    race times would be based on best efforts up to that date.
+    Uses Riegel formula: T2 = T1 * (D2/D1)^1.06
+    Returns predictions for 5km, 10km, 21.1km, 42.2km.
+    """
+    from datetime import date as dt_date
+
+    all_runs = await db.runs.find(
+        {"date": {"$gte": "2025-01-01"}},
+        {"_id": 0, "date": 1, "distance_km": 1, "duration_minutes": 1, "avg_pace": 1}
+    ).sort("date", 1).to_list(5000)
+
+    if not all_runs:
+        return {"prediction_history": [], "current": {}}
+
+    def _pace_secs(p):
+        if not p or ':' not in p:
+            return 9999
+        try:
+            pts = p.split(':')
+            return int(pts[0]) * 60 + int(pts[1])
+        except Exception:
+            return 9999
+
+    # For each run date, track cumulative best efforts for reference distances
+    target_distances = [("5km", 5), ("10km", 10), ("21.1km", 21.1), ("42.2km", 42.195)]
+    ref_distances = [10, 8, 6, 5, 4]  # distances to use as reference for Riegel
+
+    prediction_snapshots = []
+    best_efforts_so_far = {}  # {dist_bucket: {distance_km, duration_minutes, pace_secs}}
+
+    for run in all_runs:
+        dist = run.get("distance_km", 0)
+        dur = run.get("duration_minutes", 0)
+        run_date = run.get("date", "")
+        pace = run.get("avg_pace", "")
+
+        if dist < 2 or dur <= 0 or not run_date:
+            continue
+
+        pace_s = _pace_secs(pace)
+
+        # Update best effort for closest reference distance
+        for ref_d in ref_distances:
+            if abs(dist - ref_d) < 1.0:  # within 1km of reference
+                key = f"{ref_d}km"
+                existing = best_efforts_so_far.get(key)
+                if not existing or pace_s < existing["pace_secs"]:
+                    best_efforts_so_far[key] = {
+                        "distance_km": dist,
+                        "duration_minutes": dur,
+                        "pace_secs": pace_s,
+                        "date": run_date,
+                    }
+
+        # Find best reference run so far (prefer longer distances)
+        ref_run = None
+        for rd in ref_distances:
+            rk = f"{rd}km"
+            if rk in best_efforts_so_far:
+                ref_run = best_efforts_so_far[rk]
+                break
+
+        if not ref_run:
+            continue
+
+        # Calculate predictions using Riegel formula
+        ref_dist = ref_run["distance_km"]
+        ref_time = ref_run["duration_minutes"]
+        preds = {}
+        for tname, tkm in target_distances:
+            pred_time = ref_time * (tkm / ref_dist) ** 1.06
+            pred_pace_s = (pred_time * 60) / tkm
+            preds[tname] = {
+                "time_min": round(pred_time, 2),
+                "time_str": f"{int(pred_time // 60)}:{int(pred_time % 60):02d}:{int((pred_time % 1) * 60):02d}",
+                "pace": f"{int(pred_pace_s // 60)}:{int(pred_pace_s % 60):02d}",
+            }
+
+        prediction_snapshots.append({
+            "date": run_date[:10],
+            "predictions": preds,
+        })
+
+    # Deduplicate: keep last prediction per date
+    seen_dates = {}
+    for snap in prediction_snapshots:
+        seen_dates[snap["date"]] = snap
+    unique_snapshots = sorted(seen_dates.values(), key=lambda s: s["date"])
+
+    # Calculate current vs period comparisons
+    current = unique_snapshots[-1]["predictions"] if unique_snapshots else {}
+    trends = {}
+    if len(unique_snapshots) >= 2:
+        for period_key, days_back in [("1m", 30), ("3m", 90), ("6m", 180)]:
+            cutoff = (dt_date.today() - timedelta(days=days_back)).isoformat()
+            # Find closest snapshot to cutoff date
+            past_snap = None
+            for s in unique_snapshots:
+                if s["date"] <= cutoff:
+                    past_snap = s
+                else:
+                    break
+            if past_snap:
+                period_trends = {}
+                for dist_key in ["5km", "10km", "21.1km", "42.2km"]:
+                    curr_time = current.get(dist_key, {}).get("time_min", 0)
+                    past_time = past_snap["predictions"].get(dist_key, {}).get("time_min", 0)
+                    if curr_time and past_time:
+                        diff_secs = round((past_time - curr_time) * 60)
+                        period_trends[dist_key] = {
+                            "diff_seconds": diff_secs,
+                            "improved": diff_secs > 0,
+                        }
+                trends[period_key] = period_trends
+
+    return {
+        "prediction_history": unique_snapshots,
+        "current": current,
+        "trends": trends,
+    }
+
+
 @api_router.get("/runs/{run_id}/splits")
 async def get_run_splits(run_id: str):
     """Return the per-km splits for a specific run."""

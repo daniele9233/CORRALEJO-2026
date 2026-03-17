@@ -535,6 +535,9 @@ export default function ProgressiScreen() {
   const [analytics, setAnalytics] = useState<any>(null);
   const [cadenceHistory, setCadenceHistory] = useState<any[]>([]);
   const [decouplingHistory, setDecouplingHistory] = useState<any[]>([]);
+  const [predictionData, setPredictionData] = useState<any>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<string>('oggi');
+  const [selectedDistance, setSelectedDistance] = useState<string>('5km');
   const [tooltip, setTooltip] = useState<{ x: number; y: number; value: string; label: string } | null>(null);
 
   useFocusEffect(
@@ -547,14 +550,16 @@ export default function ProgressiScreen() {
     try {
       setLoading(true);
       setError(false);
-      const [data, cadenceData, decouplingData] = await Promise.all([
+      const [data, cadenceData, decouplingData, predData] = await Promise.all([
         api.getAnalytics(),
         api.getCadenceHistory().catch(() => ({ cadence_history: [] })),
         api.getDecouplingHistory().catch(() => ({ decoupling_history: [] })),
+        api.getPredictionHistory().catch(() => ({ prediction_history: [], current: {}, trends: {} })),
       ]);
       setAnalytics(data);
       setCadenceHistory(cadenceData.cadence_history || []);
       setDecouplingHistory(decouplingData.decoupling_history || []);
+      setPredictionData(predData);
     } catch (e) {
       console.error(e);
       setError(true);
@@ -975,68 +980,317 @@ export default function ProgressiScreen() {
           );
         })()}
 
-        {/* Race Predictions */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <Ionicons name="trophy" size={20} color={COLORS.lime} />
-            <Text style={styles.sectionTitle}>PREVISIONI GARA</Text>
-          </View>
-          <Text style={styles.predBasedOn}>
-            Basate sulla tua forma attuale (VO2max {vo2max})
-          </Text>
+        {/* Race Predictions - Strava style */}
+        {predictionData && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="trophy" size={20} color="#f97316" />
+              <Text style={styles.sectionTitle}>PREVISIONI GARA</Text>
+            </View>
+            <Text style={styles.predBasedOn}>
+              Basate sulle tue corse — confrontate nel tempo
+            </Text>
 
-          {race_predictions && Object.entries(race_predictions).map(([dist, pred]: [string, any]) => {
-            const isGoal = dist === '21.1km';
-            const trend = analytics.prediction_trends?.[dist];
-            return (
-              <View key={dist} style={[styles.predRow, isGoal && styles.predRowGoal]}>
-                <View style={styles.predDist}>
-                  <Text style={[styles.predDistText, isGoal && { color: COLORS.lime }]}>{dist}</Text>
-                  {isGoal && <Text style={styles.goalBadge}>OBIETTIVO</Text>}
-                </View>
-                <View style={styles.predData}>
-                  <Text style={styles.predTime}>{pred.predicted_time_str}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={styles.predPace}>{pred.predicted_pace}/km</Text>
-                    {trend && trend.diff_seconds !== 0 && (
-                      <View style={{
-                        flexDirection: 'row', alignItems: 'center',
-                        backgroundColor: trend.improved ? '#22c55e20' : '#ef444420',
-                        paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4,
+            {/* Distance tabs */}
+            <View style={{ flexDirection: 'row', marginBottom: SPACING.lg, gap: 6 }}>
+              {[
+                { key: '5km', label: '5 KM' },
+                { key: '10km', label: '10 KM' },
+                { key: '21.1km', label: 'Mezza' },
+                { key: '42.2km', label: 'Maratona' },
+              ].map(tab => (
+                <TouchableOpacity
+                  key={tab.key}
+                  onPress={() => setSelectedDistance(tab.key)}
+                  style={{
+                    flex: 1, paddingVertical: 8, borderRadius: BORDER_RADIUS.md,
+                    backgroundColor: selectedDistance === tab.key ? '#f97316' : COLORS.bg,
+                    borderWidth: 1, borderColor: selectedDistance === tab.key ? '#f97316' : COLORS.cardBorder,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{
+                    fontSize: 10, fontWeight: '800',
+                    color: selectedDistance === tab.key ? '#fff' : COLORS.textMuted,
+                  }}>{tab.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Current prediction for selected distance */}
+            {predictionData.current?.[selectedDistance] && (() => {
+              const curr = predictionData.current[selectedDistance];
+              const distLabels: Record<string, string> = { '5km': '5', '10km': '10', '21.1km': '21,1', '42.2km': '42,2' };
+
+              // Get trend for selected period
+              const periodKey = selectedPeriod === 'oggi' ? null : selectedPeriod === '1m' ? '1m' : selectedPeriod === '3m' ? '3m' : '6m';
+              const trend = periodKey ? predictionData.trends?.[periodKey]?.[selectedDistance] : null;
+
+              return (
+                <View style={{ alignItems: 'center', marginBottom: SPACING.lg }}>
+                  {/* Distance badge */}
+                  <View style={{
+                    width: 60, height: 60, borderRadius: 30,
+                    borderWidth: 3, borderColor: '#f97316',
+                    alignItems: 'center', justifyContent: 'center', marginBottom: SPACING.sm,
+                  }}>
+                    <Text style={{ fontSize: 18, color: '#f97316', fontWeight: '900' }}>{distLabels[selectedDistance]}</Text>
+                    <Text style={{ fontSize: 8, color: '#f97316', fontWeight: '700', marginTop: -2 }}>KM</Text>
+                  </View>
+
+                  {/* Time and pace */}
+                  <Text style={{ fontSize: 32, color: COLORS.text, fontWeight: '900' }}>{curr.time_str}</Text>
+                  <Text style={{ fontSize: 14, color: COLORS.textMuted, marginTop: 2 }}>{curr.pace} /km</Text>
+
+                  {/* Trend badge */}
+                  {trend && trend.diff_seconds !== 0 && (
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', marginTop: SPACING.sm,
+                      backgroundColor: trend.improved ? '#22c55e20' : '#ef444420',
+                      paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
+                    }}>
+                      <Ionicons
+                        name={trend.improved ? "caret-down" : "caret-up"}
+                        size={14}
+                        color={trend.improved ? '#22c55e' : '#ef4444'}
+                      />
+                      <Text style={{
+                        fontSize: 13, fontWeight: '800',
+                        color: trend.improved ? '#22c55e' : '#ef4444',
                       }}>
-                        <Ionicons
-                          name={trend.improved ? "caret-down" : "caret-up"}
-                          size={10}
-                          color={trend.improved ? '#22c55e' : '#ef4444'}
-                        />
-                        <Text style={{
-                          fontSize: 9, fontWeight: '800',
-                          color: trend.improved ? '#22c55e' : '#ef4444',
-                        }}>
-                          {Math.abs(trend.diff_seconds)}s
-                        </Text>
-                      </View>
-                    )}
+                        {Math.abs(trend.diff_seconds)}sec
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* Prediction history chart for selected distance */}
+            {predictionData.prediction_history && predictionData.prediction_history.length >= 2 && (() => {
+              // Filter data based on period
+              const now = new Date();
+              let cutoffDate = '2025-01-01';
+              if (selectedPeriod === '1m') cutoffDate = new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
+              else if (selectedPeriod === '3m') cutoffDate = new Date(now.getTime() - 90 * 86400000).toISOString().slice(0, 10);
+              else if (selectedPeriod === '6m') cutoffDate = new Date(now.getTime() - 180 * 86400000).toISOString().slice(0, 10);
+
+              const filteredData = predictionData.prediction_history.filter(
+                (s: any) => s.date >= cutoffDate && s.predictions[selectedDistance]
+              );
+              if (filteredData.length < 2) return null;
+
+              const timeValues = filteredData.map((s: any) => s.predictions[selectedDistance].time_min);
+              const maxTime = Math.max(...timeValues) + 1;
+              const minTime = Math.min(...timeValues) - 1;
+              const rangeTime = maxTime - minTime || 5;
+
+              const predChartH = 160;
+              const predChartW = SCREEN_WIDTH - 120;
+              const stepX = predChartW / Math.max(filteredData.length - 1, 1);
+
+              const toY = (val: number) => predChartH - ((maxTime - val) / rangeTime) * predChartH;
+
+              const formatTime = (min: number) => {
+                if (min < 60) return `${Math.floor(min)}:${Math.round((min % 1) * 60).toString().padStart(2, '0')}`;
+                return `${Math.floor(min / 60)}:${Math.round(min % 60).toString().padStart(2, '0')}`;
+              };
+
+              const formatDate = (d: string) => {
+                try { const p = d.split('-'); return `${p[2]}/${p[1]}`; } catch { return d; }
+              };
+
+              // Month labels for X axis
+              const months: Record<string, string> = {
+                '01': 'GEN', '02': 'FEB', '03': 'MAR', '04': 'APR', '05': 'MAG', '06': 'GIU',
+                '07': 'LUG', '08': 'AGO', '09': 'SET', '10': 'OTT', '11': 'NOV', '12': 'DIC',
+              };
+
+              return (
+                <View style={{ marginTop: SPACING.sm }}>
+                  <View style={{ height: predChartH + 40 }}>
+                    {/* Y-axis labels */}
+                    <View style={{ position: 'absolute', left: 0, top: 0, height: predChartH, justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{formatTime(minTime)}</Text>
+                      <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{formatTime((minTime + maxTime) / 2)}</Text>
+                      <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{formatTime(maxTime)}</Text>
+                    </View>
+
+                    {/* Chart */}
+                    <View style={{ marginLeft: 44, height: predChartH, position: 'relative' }}>
+                      {/* Grid lines */}
+                      {[0, 0.5, 1].map((pct, i) => (
+                        <View key={i} style={{
+                          position: 'absolute', top: pct * predChartH,
+                          left: 0, right: 0, height: 1,
+                          backgroundColor: COLORS.cardBorder, opacity: 0.5,
+                        }} />
+                      ))}
+
+                      {/* Lines */}
+                      {filteredData.map((s: any, i: number) => {
+                        if (i === 0) return null;
+                        const prev = filteredData[i - 1];
+                        const x1 = (i - 1) * stepX, y1 = toY(prev.predictions[selectedDistance].time_min);
+                        const x2 = i * stepX, y2 = toY(s.predictions[selectedDistance].time_min);
+                        const dx = x2 - x1, dy = y2 - y1;
+                        const length = Math.sqrt(dx * dx + dy * dy);
+                        const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                        return (
+                          <View key={`phl-${i}`} style={{
+                            position: 'absolute', left: x1, top: y1,
+                            width: length, height: 2, backgroundColor: '#3b82f6',
+                            transform: [{ rotate: `${angle}deg` }], transformOrigin: 'left center', opacity: 0.8,
+                          }} />
+                        );
+                      })}
+
+                      {/* Dots */}
+                      {filteredData.map((s: any, i: number) => {
+                        const y = toY(s.predictions[selectedDistance].time_min);
+                        const isLast = i === filteredData.length - 1;
+                        return (
+                          <View key={`phd-${i}`} style={{
+                            position: 'absolute', left: i * stepX - (isLast ? 6 : 3), top: y - (isLast ? 6 : 3),
+                            width: isLast ? 12 : 6, height: isLast ? 12 : 6,
+                            borderRadius: isLast ? 6 : 3,
+                            backgroundColor: isLast ? '#3b82f6' : '#3b82f680',
+                          }} />
+                        );
+                      })}
+                    </View>
+
+                    {/* X-axis labels */}
+                    <View style={{ marginLeft: 44, flexDirection: 'row', marginTop: 4 }}>
+                      {filteredData.map((s: any, i: number) => {
+                        const monthKey = s.date.split('-')[1];
+                        const showLabel = i % Math.max(1, Math.floor(filteredData.length / 5)) === 0;
+                        return (
+                          <Text key={i} style={{
+                            position: 'absolute', left: i * stepX - 14, fontSize: 8,
+                            color: COLORS.textMuted, width: 30, textAlign: 'center',
+                          }}>
+                            {showLabel ? (months[monthKey] || monthKey) : ''}
+                          </Text>
+                        );
+                      })}
+                    </View>
                   </View>
                 </View>
-              </View>
-            );
-          })}
+              );
+            })()}
 
-          {/* Goal progress */}
-          <View style={styles.goalSection}>
-            <Text style={styles.goalTitle}>Obiettivo Mezza Maratona</Text>
-            <View style={styles.goalRow}>
-              <Text style={styles.goalCurrent}>{current_hm_pred_str}</Text>
-              <Ionicons name="arrow-forward" size={14} color={COLORS.textMuted} />
-              <Text style={[styles.goalTarget, { color: COLORS.lime }]}>{target_hm_time_str}</Text>
+            {/* Period tabs */}
+            <View style={{
+              flexDirection: 'row', marginTop: SPACING.lg,
+              backgroundColor: COLORS.bg, borderRadius: BORDER_RADIUS.md, overflow: 'hidden',
+            }}>
+              {[
+                { key: 'oggi', label: 'Oggi' },
+                { key: '1m', label: '1M' },
+                { key: '3m', label: '3M' },
+                { key: '6m', label: '6M' },
+              ].map(tab => (
+                <TouchableOpacity
+                  key={tab.key}
+                  onPress={() => setSelectedPeriod(tab.key)}
+                  style={{
+                    flex: 1, paddingVertical: 10, alignItems: 'center',
+                    backgroundColor: selectedPeriod === tab.key ? COLORS.cardBorder : 'transparent',
+                    borderRadius: BORDER_RADIUS.sm,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    {selectedPeriod === tab.key && <Ionicons name="checkmark" size={12} color={COLORS.text} />}
+                    <Text style={{
+                      fontSize: 13, fontWeight: '700',
+                      color: selectedPeriod === tab.key ? COLORS.text : COLORS.textMuted,
+                    }}>{tab.label}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
             </View>
-            <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: `${Math.min(100, goal_progress_pct)}%` }]} />
+
+            {/* All distances overview */}
+            <View style={{ marginTop: SPACING.lg }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm }}>
+                {[
+                  { key: '5km', label: '5', unit: 'KM' },
+                  { key: '10km', label: '10', unit: 'KM' },
+                  { key: '21.1km', label: '21,1', unit: 'KM' },
+                  { key: '42.2km', label: '42,2', unit: 'KM' },
+                ].map(d => {
+                  const pred = predictionData.current?.[d.key];
+                  if (!pred) return null;
+                  const isGoal = d.key === '21.1km';
+                  const periodKey = selectedPeriod === 'oggi' ? null : selectedPeriod;
+                  const trend = periodKey ? predictionData.trends?.[periodKey]?.[d.key] : null;
+
+                  return (
+                    <TouchableOpacity
+                      key={d.key}
+                      onPress={() => setSelectedDistance(d.key)}
+                      style={{
+                        width: '48%', alignItems: 'center', paddingVertical: SPACING.md,
+                        backgroundColor: selectedDistance === d.key ? '#f9731610' : COLORS.bg,
+                        borderRadius: BORDER_RADIUS.md,
+                        borderWidth: selectedDistance === d.key ? 1 : 0,
+                        borderColor: '#f97316',
+                      }}
+                    >
+                      <View style={{
+                        width: 40, height: 40, borderRadius: 20,
+                        borderWidth: 2, borderColor: '#f97316',
+                        alignItems: 'center', justifyContent: 'center', marginBottom: 4,
+                      }}>
+                        <Text style={{ fontSize: 12, color: '#f97316', fontWeight: '900' }}>{d.label}</Text>
+                        <Text style={{ fontSize: 6, color: '#f97316', fontWeight: '700', marginTop: -1 }}>{d.unit}</Text>
+                      </View>
+                      <Text style={{ fontSize: 16, color: COLORS.text, fontWeight: '900' }}>{pred.time_str}</Text>
+                      <Text style={{ fontSize: 10, color: COLORS.textMuted }}>{pred.pace}/km</Text>
+                      {trend && trend.diff_seconds !== 0 && (
+                        <View style={{
+                          flexDirection: 'row', alignItems: 'center', marginTop: 4,
+                          backgroundColor: trend.improved ? '#22c55e20' : '#ef444420',
+                          paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8,
+                        }}>
+                          <Ionicons
+                            name={trend.improved ? "caret-down" : "caret-up"}
+                            size={10}
+                            color={trend.improved ? '#22c55e' : '#ef4444'}
+                          />
+                          <Text style={{
+                            fontSize: 9, fontWeight: '800',
+                            color: trend.improved ? '#22c55e' : '#ef4444',
+                          }}>{Math.abs(trend.diff_seconds)}sec</Text>
+                        </View>
+                      )}
+                      {isGoal && (
+                        <View style={{ backgroundColor: COLORS.lime + '20', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, marginTop: 4 }}>
+                          <Text style={{ fontSize: 7, color: COLORS.lime, fontWeight: '800' }}>OBIETTIVO</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
-            <Text style={styles.progressPct}>{goal_progress_pct}% verso l'obiettivo</Text>
+
+            {/* Goal progress */}
+            <View style={styles.goalSection}>
+              <Text style={styles.goalTitle}>Obiettivo Mezza Maratona</Text>
+              <View style={styles.goalRow}>
+                <Text style={styles.goalCurrent}>{current_hm_pred_str}</Text>
+                <Ionicons name="arrow-forward" size={14} color={COLORS.textMuted} />
+                <Text style={[styles.goalTarget, { color: COLORS.lime }]}>{target_hm_time_str}</Text>
+              </View>
+              <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFill, { width: `${Math.min(100, goal_progress_pct)}%` }]} />
+              </View>
+              <Text style={styles.progressPct}>{goal_progress_pct}% verso l'obiettivo</Text>
+            </View>
           </View>
-        </View>
+        )}
 
         {/* Best Efforts - Medals */}
         {best_efforts && Object.keys(best_efforts).length > 0 && (

@@ -438,18 +438,28 @@ export default function RunDetailScreen() {
                 const secs = paceToSeconds(split.pace);
                 if (secs <= 0) return null;
                 const barPct = maxPace > 0 ? (secs / maxPace) : 0.5;
-                const barW = Math.max(40, barPct * barMaxWidth);
                 const isFaster = secs < avgPaceSecs;
                 const isSlower = secs > avgPaceSecs;
                 const barColor = isFaster ? COLORS.green : isSlower ? COLORS.red : COLORS.textSecondary;
 
                 return (
-                  <View key={i} style={styles.splitRow}>
-                    <Text style={styles.splitKm}>{split.km}</Text>
-                    <View style={[styles.splitBar, { width: barW, backgroundColor: barColor + '60' }]}>
-                      <Text style={[styles.splitPace, { color: '#fff' }]}>{split.pace}</Text>
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Text style={{ width: 24, textAlign: 'center', fontSize: FONT_SIZES.xs, color: COLORS.textMuted, fontWeight: '700' }}>{split.km}</Text>
+                    <View style={{ flex: 1, marginLeft: 6 }}>
+                      <View style={{
+                        width: `${Math.max(20, barPct * 100)}%`,
+                        height: 24,
+                        borderRadius: BORDER_RADIUS.sm,
+                        backgroundColor: barColor + '60',
+                        justifyContent: 'center',
+                        paddingHorizontal: SPACING.sm,
+                      }}>
+                        <Text style={{ fontSize: FONT_SIZES.xs, fontWeight: '800', color: '#fff' }}>{split.pace}</Text>
+                      </View>
                     </View>
-                    <Text style={styles.splitHr}>{split.hr != null ? `${split.hr} bpm` : ''}</Text>
+                    <Text style={{ width: 60, textAlign: 'right', fontSize: FONT_SIZES.xs, color: COLORS.textMuted, marginLeft: 6 }}>
+                      {split.hr != null ? `${split.hr} bpm` : ''}
+                    </Text>
                   </View>
                 );
               })}
