@@ -76,7 +76,7 @@ Progettata per un runner in fase di ritorno post-infortunio con obiettivo tempo 
 | **Visibilità** | Public |
 | **Package Android** | `com.kikkoderiso.corralejo` |
 | **URL Scheme** | `corralejo://` |
-| **EAS Project ID** | `b6eee442-2a97-4b31-803f-21db08504ca3` |
+| **EAS Project ID** | `a48df678-6b21-4c17-9033-76216bd17940` (account daniele9233, da ritrasferire a kikkoderiso dopo 01/04/2026) |
 
 ### Struttura Repository
 ```
@@ -323,13 +323,15 @@ Form per aggiungere risultati test:
 Analisi completa di una corsa:
 - Tutte le metriche (distanza, passo, durata, FC, tipo)
 - **Piano vs Realtà**: confronto distanza/passo/durata con sessione pianificata
-- **Splits per km**: barre colorate (verde = più veloce, rosso = più lento della media)
+- **Splits per km**: barre colorate con passo dentro la barra e HR a destra, subtitle passo medio
+- **Zone di passo**: distribuzione % per zone con barre colorate
+- **Efficienza Aerobica (Pa:Hr)**: decoupling cardiaco tra 1ª e 2ª metà corsa (solo corse a passo costante, CV<10%)
+- **Rilevamento ripetute**: banner automatico quando la variabilità del passo è alta (CV >15%)
 - **Cadenza e dislivello**: dati da Strava
 - **Analisi AI** (generata da Google Gemini o algoritmo interno):
-  - Confronto con sessione pianificata
-  - Deviazione passo e distanza
-  - Verdetto: perfetto / troppo intenso / troppo leggero
-  - Raccomandazioni per le prossime sessioni
+  - 9 sezioni strutturate: intro, dati corsa, classificazione, utilità per obiettivo, positivi, lacune, reality check con tempi stimati, consigli tecnici, voto/10
+  - Tono naturale da allenatore esperto (non template)
+  - Raccomandazioni con workout specifici
 
 ### 9. 📋 Dettaglio Sessione
 Dettagli di una sessione pianificata:
@@ -348,11 +350,13 @@ Grafico a barre del piano di allenamento:
 
 ### 11. 📉 Progressi
 Storico evoluzione prestazioni:
-- **VO2max**: valore corrente vs target con barra progresso + grafico andamento
+- **VO2max**: valore corrente vs target con barra progresso + grafico andamento (touch tooltip)
 - **Soglia anaerobica**: confronto pre-infortunio vs attuale + storico passi
-- **Andamento paces**: line chart settimanale per zona (Easy/Tempo/Fast)
-- **Cadenza**: grafico mensile con target 180 spm (dati da Strava)
-- **Previsioni gara**: 5km, 10km, 21.1km con progresso verso obiettivo
+- **Andamento paces**: line chart settimanale per zona Easy/Tempo/Fast (touch tooltip con drag)
+- **Cadenza**: grafico mensile con target 180 spm da Strava (touch tooltip con drag)
+- **Efficienza Aerobica (trend)**: grafico decoupling settimanale con zone colorate (verde/giallo/arancione/rosso), target 5%
+- **Distribuzione zone HR**: barre Z1-Z5 con soglie assolute BPM (Z1<117, Z2 117-146, Z3 147-160, Z4 161-175, Z5>175)
+- **Previsioni gara**: 5km, 10km, 21.1km con progresso verso obiettivo + frecce trend (miglioramento/peggioramento in secondi)
 - **Best efforts**: migliori prestazioni per distanza con passo e FC
 
 ### 12. 🧮 Calcolatore
@@ -498,6 +502,7 @@ Base URL: `https://corralejo-backend.onrender.com/api`
 | GET | `/cadence-history` | Storico cadenza mensile (spm) per grafico trend |
 | GET | `/best-efforts` | Migliori prestazioni per distanza |
 | GET | `/runs/{run_id}/splits` | Splits per km di una corsa specifica |
+| GET | `/decoupling-history` | Storico decoupling cardiaco settimanale (solo corse steady, CV<10%) |
 
 ### AI
 | Metodo | Endpoint | Descrizione |
@@ -536,6 +541,7 @@ Base URL: `https://corralejo-backend.onrender.com/api`
 | GET | `/strava/profile` | Profilo Strava (se connesso) |
 | GET | `/strava/activities` | Attività da Strava |
 | POST | `/strava/sync` | Sync attività Strava + auto-adatta piano + ricalcola VDOT |
+| POST | `/strava/resync-details` | Re-fetch dettagli Strava (cadenza, splits, best efforts) per corse esistenti |
 
 ---
 
@@ -761,7 +767,8 @@ npx expo run:android
 - [x] **AI Coach "Renato Canova"** — Analisi corse con Google Gemini come allenatore di fama mondiale, tono naturale, mai template, calcola settimane alla gara, conosce profilo atleta
 - [x] **Best Efforts con medaglie** — 🥇🥈🥉 per i record personali con push notification su nuovo PR
 - [x] **auto_adapt_plan() scientifico** — 5 modelli peer-reviewed: Impellizzeri 2020 (no ACWR), ACSM 10%, Foster monotonia, Seiler polarizzazione, Mujika tapering
-- [x] **Splits per km** — Visualizzazione passo per ogni km con barre colorate (negative/positive split)
+- [x] **Splits per km** — Passo dentro la barra, HR a destra, subtitle passo medio, no overlap
+- [x] **Zone di passo** — Distribuzione % per zone con barre colorate (formato corretto per valori ≥10% e <10%)
 - [x] **Cadence trend** — Grafico andamento cadenza mensile con target 180 spm
 - [x] **Notifiche push VO2max/soglia** — Notifica automatica quando il VO2max migliora dopo sync Strava
 - [x] **Notifiche push giornaliere** — Reminder mattutino con la sessione del giorno
@@ -770,6 +777,12 @@ npx expo run:android
 - [x] **Injury Risk Score** — Analisi predittiva infortunio con gauge, fattori, alert e raccomandazioni
 - [x] **Pace & Race Predictor** — Calcolatore VDOT, previsioni gara (Riegel), convertitore passo
 - [x] **VDOT Paces API** — Endpoint `/vdot/paces` con i 5 passi di Daniels calcolati dal VDOT reale
+- [x] **Efficienza Aerobica (trend)** — Grafico decoupling settimanale in Progressi con zone colorate, target 5%, touch tooltip
+- [x] **Rilevamento ripetute** — Banner automatico su corse con alta variabilità passo (CV >15%)
+- [x] **Previsioni gara con trend** — Frecce verdi/rosse con secondi di miglioramento/peggioramento per distanza
+- [x] **Touch tooltip su grafici** — Tutti i grafici in Progressi supportano touch-and-drag per vedere i valori
+- [x] **Zone HR corrette** — Soglie assolute BPM (non % del max) per distribuzione accurata: Z1<117, Z2 117-146, Z3 147-160, Z4 161-175, Z5>175
+- [x] **Resync dettagli Strava** — Endpoint per re-fetch cadenza, splits, best efforts per corse esistenti
 - [x] **EAS Updates (OTA)** — Aggiornamenti over-the-air configurati (`eas update` senza rebuild APK)
 - [x] **Logo Corralejo** — Icona app con runner stilizzato + sfondo gradient (adaptive icon Android)
 - [x] **Nome app** — "Corralejo 2026" (era "frontend")
