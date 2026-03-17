@@ -1649,6 +1649,31 @@ async def get_analytics():
                 "based_on": f"{ref_dist}km del {ref_date} ({ref_pace}/km)"
             }
 
+    # ---- PREDICTION TREND (compare with previous) ----
+    prediction_trends = {}
+    prev_preds = await db.prediction_history.find_one({"type": "latest"}, {"_id": 0})
+    if prev_preds and race_predictions:
+        for dist_key, pred in race_predictions.items():
+            prev_time = prev_preds.get("predictions", {}).get(dist_key, {}).get("predicted_time_min")
+            if prev_time:
+                diff_secs = round((prev_time - pred["predicted_time_min"]) * 60)
+                prediction_trends[dist_key] = {
+                    "diff_seconds": diff_secs,
+                    "improved": diff_secs > 0,
+                }
+
+    # Save current predictions
+    if race_predictions:
+        await db.prediction_history.update_one(
+            {"type": "latest"},
+            {"$set": {
+                "type": "latest",
+                "predictions": race_predictions,
+                "updated_at": today.isoformat(),
+            }},
+            upsert=True
+        )
+
     # Target half marathon: 4:30/km = 94:55
     target_hm_time = 95.0
     current_hm_pred = race_predictions.get("21.1km", {}).get("predicted_time_min", 999)
@@ -1953,6 +1978,7 @@ async def get_analytics():
         "vo2max_history": vo2max_history,
         "user_max_hr": user_max_hr,
         "race_predictions": race_predictions,
+        "prediction_trends": prediction_trends,
         "goal_gap_min": goal_gap_min,
         "goal_progress_pct": goal_progress_pct,
         "target_hm_time_str": "1:35:00",
@@ -2749,6 +2775,7 @@ async def sync_strava_activities():
                             sp_dist = sp.get("distance", 0)
                             sp_time = sp.get("elapsed_time", 0)
                             sp_hr = sp.get("average_heartrate")
+                            sp_elev = sp.get("elevation_difference")
                             if sp_dist > 0 and sp_time > 0:
                                 sp_pace_s = sp_time / (sp_dist / 1000)
                                 sp_pace = f"{int(sp_pace_s // 60)}:{int(sp_pace_s % 60):02d}"
@@ -2760,6 +2787,7 @@ async def sync_strava_activities():
                                 "hr": round(sp_hr) if sp_hr else None,
                                 "distance": round(sp_dist, 1),
                                 "elapsed_time": sp_time,
+                                "elevation_difference": round(sp_elev, 1) if sp_elev is not None else None,
                             })
                         await db.runs.update_one(
                             {"id": run_doc["id"]},
@@ -2862,6 +2890,7 @@ async def resync_strava_details():
                                 sp_dist = sp.get("distance", 0)
                                 sp_time = sp.get("elapsed_time", 0)
                                 sp_hr = sp.get("average_heartrate")
+                                sp_elev = sp.get("elevation_difference")
                                 if sp_dist > 0 and sp_time > 0:
                                     sp_pace_s = sp_time / (sp_dist / 1000)
                                     sp_pace = f"{int(sp_pace_s // 60)}:{int(sp_pace_s % 60):02d}"
@@ -2873,6 +2902,7 @@ async def resync_strava_details():
                                     "hr": round(sp_hr) if sp_hr else None,
                                     "distance": round(sp_dist, 1),
                                     "elapsed_time": sp_time,
+                                    "elevation_difference": round(sp_elev, 1) if sp_elev is not None else None,
                                 })
                             update_fields["splits"] = splits
 

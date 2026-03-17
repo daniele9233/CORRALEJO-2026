@@ -32,6 +32,7 @@ const LINE_CHART_HEIGHT = 180;
 const LINE_CHART_PADDING = 40;
 
 function PaceLineChart({ data }: { data: any[] }) {
+  const [paceTooltip, setPaceTooltip] = useState<{ x: number; easy: string; tempo: string; fast: string; week: string } | null>(null);
   if (!data || data.length < 2) return null;
 
   // Get all pace values to determine scale
@@ -89,7 +90,38 @@ function PaceLineChart({ data }: { data: any[] }) {
       </View>
 
       {/* Chart area */}
-      <View style={{ marginLeft: LINE_CHART_PADDING, height: LINE_CHART_HEIGHT, position: 'relative' }}>
+      <View
+        style={{ marginLeft: LINE_CHART_PADDING, height: LINE_CHART_HEIGHT, position: 'relative' }}
+        onStartShouldSetResponder={() => true}
+        onMoveShouldSetResponder={() => true}
+        onResponderGrant={(e) => {
+          const touchX = e.nativeEvent.locationX;
+          const idx = Math.round(touchX / displayStepX);
+          const clamped = Math.max(0, Math.min(idx, displayData.length - 1));
+          const d = displayData[clamped];
+          setPaceTooltip({
+            x: clamped * displayStepX,
+            easy: d.easy_pace_secs ? formatPace(d.easy_pace_secs) : '-',
+            tempo: d.tempo_pace_secs ? formatPace(d.tempo_pace_secs) : '-',
+            fast: d.fast_pace_secs ? formatPace(d.fast_pace_secs) : '-',
+            week: formatWeek(d.week),
+          });
+        }}
+        onResponderMove={(e) => {
+          const touchX = e.nativeEvent.locationX;
+          const idx = Math.round(touchX / displayStepX);
+          const clamped = Math.max(0, Math.min(idx, displayData.length - 1));
+          const d = displayData[clamped];
+          setPaceTooltip({
+            x: clamped * displayStepX,
+            easy: d.easy_pace_secs ? formatPace(d.easy_pace_secs) : '-',
+            tempo: d.tempo_pace_secs ? formatPace(d.tempo_pace_secs) : '-',
+            fast: d.fast_pace_secs ? formatPace(d.fast_pace_secs) : '-',
+            week: formatWeek(d.week),
+          });
+        }}
+        onResponderRelease={() => setPaceTooltip(null)}
+      >
         {/* Grid lines */}
         {[0, 0.5, 1].map((pct, i) => (
           <View key={i} style={{
@@ -146,6 +178,26 @@ function PaceLineChart({ data }: { data: any[] }) {
             </React.Fragment>
           );
         })}
+        {/* Tooltip */}
+        {paceTooltip && (
+          <View style={{
+            position: 'absolute',
+            left: Math.max(0, Math.min(paceTooltip.x - 40, chartW - 80)),
+            top: 5,
+            backgroundColor: COLORS.card,
+            borderRadius: 8,
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderWidth: 1,
+            borderColor: COLORS.lime,
+            zIndex: 10,
+          }}>
+            <Text style={{ fontSize: 8, color: COLORS.textMuted, fontWeight: '700' }}>{paceTooltip.week}</Text>
+            <Text style={{ fontSize: 9, color: '#4ade80' }}>Easy: {paceTooltip.easy}</Text>
+            <Text style={{ fontSize: 9, color: '#facc15' }}>Tempo: {paceTooltip.tempo}</Text>
+            <Text style={{ fontSize: 9, color: '#f87171' }}>Fast: {paceTooltip.fast}</Text>
+          </View>
+        )}
       </View>
 
       {/* X-axis labels */}
@@ -169,6 +221,7 @@ function PaceLineChart({ data }: { data: any[] }) {
 
 // ---- Cadence Line Chart Component ----
 function CadenceLineChart({ data }: { data: { month: string; avg_cadence: number; runs_count: number }[] }) {
+  const [cadTooltip, setCadTooltip] = useState<{ x: number; value: number; month: string } | null>(null);
   if (!data || data.length < 2) return null;
 
   const cadences = data.map(d => d.avg_cadence);
@@ -198,7 +251,24 @@ function CadenceLineChart({ data }: { data: { month: string; avg_cadence: number
       </View>
 
       {/* Chart area */}
-      <View style={{ marginLeft: 36, height: cadChartH, position: 'relative' }}>
+      <View
+        style={{ marginLeft: 36, height: cadChartH, position: 'relative' }}
+        onStartShouldSetResponder={() => true}
+        onMoveShouldSetResponder={() => true}
+        onResponderGrant={(e) => {
+          const touchX = e.nativeEvent.locationX;
+          const idx = Math.round(touchX / stepX);
+          const clamped = Math.max(0, Math.min(idx, data.length - 1));
+          setCadTooltip({ x: clamped * stepX, value: data[clamped].avg_cadence, month: fmtMonth(data[clamped].month) });
+        }}
+        onResponderMove={(e) => {
+          const touchX = e.nativeEvent.locationX;
+          const idx = Math.round(touchX / stepX);
+          const clamped = Math.max(0, Math.min(idx, data.length - 1));
+          setCadTooltip({ x: clamped * stepX, value: data[clamped].avg_cadence, month: fmtMonth(data[clamped].month) });
+        }}
+        onResponderRelease={() => setCadTooltip(null)}
+      >
         {/* Grid lines */}
         {[0, 0.5, 1].map((pct, i) => (
           <View key={i} style={{
@@ -256,6 +326,24 @@ function CadenceLineChart({ data }: { data: { month: string; avg_cadence: number
             }}>{d.avg_cadence}</Text>
           </React.Fragment>
         ))}
+        {/* Tooltip */}
+        {cadTooltip && (
+          <View style={{
+            position: 'absolute',
+            left: Math.max(0, Math.min(cadTooltip.x - 35, cadChartW - 70)),
+            top: toY(cadTooltip.value) - 45,
+            backgroundColor: COLORS.card,
+            borderRadius: 8,
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderWidth: 1,
+            borderColor: COLORS.blue,
+            zIndex: 10,
+          }}>
+            <Text style={{ fontSize: 10, color: COLORS.blue, fontWeight: '800' }}>{cadTooltip.value} spm</Text>
+            <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{cadTooltip.month}</Text>
+          </View>
+        )}
       </View>
 
       {/* X-axis labels */}
@@ -279,6 +367,7 @@ export default function ProgressiScreen() {
   const [error, setError] = useState(false);
   const [analytics, setAnalytics] = useState<any>(null);
   const [cadenceHistory, setCadenceHistory] = useState<any[]>([]);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; value: string; label: string } | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -432,7 +521,26 @@ export default function ProgressiScreen() {
                     <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{((minV + maxV) / 2).toFixed(1)}</Text>
                     <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{minV.toFixed(1)}</Text>
                   </View>
-                  <View style={{ marginLeft: 36, height: vo2ChartH, position: 'relative' }}>
+                  <View
+                    style={{ marginLeft: 36, height: vo2ChartH, position: 'relative' }}
+                    onStartShouldSetResponder={() => true}
+                    onMoveShouldSetResponder={() => true}
+                    onResponderGrant={(e) => {
+                      const touchX = e.nativeEvent.locationX;
+                      const idx = Math.round(touchX / stepX);
+                      const clamped = Math.max(0, Math.min(idx, points.length - 1));
+                      const p = points[clamped];
+                      setTooltip({ x: clamped * stepX + 36, y: toY(p.vdot), value: `${p.vdot}`, label: fmtDate(p.date) });
+                    }}
+                    onResponderMove={(e) => {
+                      const touchX = e.nativeEvent.locationX;
+                      const idx = Math.round(touchX / stepX);
+                      const clamped = Math.max(0, Math.min(idx, points.length - 1));
+                      const p = points[clamped];
+                      setTooltip({ x: clamped * stepX + 36, y: toY(p.vdot), value: `${p.vdot}`, label: fmtDate(p.date) });
+                    }}
+                    onResponderRelease={() => setTooltip(null)}
+                  >
                     {[0, 0.5, 1].map((pct, i) => (
                       <View key={i} style={{ position: 'absolute', top: pct * vo2ChartH, left: 0, right: 0, height: 1, backgroundColor: COLORS.cardBorder, opacity: 0.5 }} />
                     ))}
@@ -464,6 +572,24 @@ export default function ProgressiScreen() {
                         }}>{p.vdot}</Text>
                       </React.Fragment>
                     ))}
+                    {/* Tooltip */}
+                    {tooltip && (
+                      <View style={{
+                        position: 'absolute',
+                        left: Math.max(0, Math.min(tooltip.x - 36 - 35, vo2ChartW - 70)),
+                        top: Math.max(0, tooltip.y - 45),
+                        backgroundColor: COLORS.card,
+                        borderRadius: 8,
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderWidth: 1,
+                        borderColor: COLORS.lime,
+                        zIndex: 10,
+                      }}>
+                        <Text style={{ fontSize: 10, color: COLORS.lime, fontWeight: '800' }}>{tooltip.value}</Text>
+                        <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{tooltip.label}</Text>
+                      </View>
+                    )}
                   </View>
                   <View style={{ marginLeft: 36, flexDirection: 'row', marginTop: 4 }}>
                     {points.map((p: any, i: number) => (
@@ -618,7 +744,7 @@ export default function ProgressiScreen() {
                     <View style={{ flex: 1, height: 22, backgroundColor: COLORS.bg, borderRadius: 6, overflow: 'hidden' }}>
                       <View style={{
                         height: 22,
-                        width: `${Math.max(2, (z.pct / maxPct) * 100)}%`,
+                        width: `${Math.max(2, z.pct)}%`,
                         backgroundColor: z.color + '40',
                         borderRadius: 6,
                         justifyContent: 'center',
@@ -671,6 +797,7 @@ export default function ProgressiScreen() {
 
           {race_predictions && Object.entries(race_predictions).map(([dist, pred]: [string, any]) => {
             const isGoal = dist === '21.1km';
+            const trend = analytics.prediction_trends?.[dist];
             return (
               <View key={dist} style={[styles.predRow, isGoal && styles.predRowGoal]}>
                 <View style={styles.predDist}>
@@ -679,7 +806,28 @@ export default function ProgressiScreen() {
                 </View>
                 <View style={styles.predData}>
                   <Text style={styles.predTime}>{pred.predicted_time_str}</Text>
-                  <Text style={styles.predPace}>{pred.predicted_pace}/km</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={styles.predPace}>{pred.predicted_pace}/km</Text>
+                    {trend && trend.diff_seconds !== 0 && (
+                      <View style={{
+                        flexDirection: 'row', alignItems: 'center',
+                        backgroundColor: trend.improved ? '#22c55e20' : '#ef444420',
+                        paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4,
+                      }}>
+                        <Ionicons
+                          name={trend.improved ? "caret-down" : "caret-up"}
+                          size={10}
+                          color={trend.improved ? '#22c55e' : '#ef4444'}
+                        />
+                        <Text style={{
+                          fontSize: 9, fontWeight: '800',
+                          color: trend.improved ? '#22c55e' : '#ef4444',
+                        }}>
+                          {Math.abs(trend.diff_seconds)}s
+                        </Text>
+                      </View>
+                    )}
+                  </View>
                 </View>
               </View>
             );

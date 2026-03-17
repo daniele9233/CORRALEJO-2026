@@ -433,6 +433,11 @@ export default function RunDetailScreen() {
                     {split.hr && (
                       <Text style={styles.splitHr}>{split.hr} bpm</Text>
                     )}
+                    {split.elevation_difference != null && (
+                      <Text style={{ fontSize: 9, color: split.elevation_difference >= 0 ? '#ef4444' : '#22c55e', width: 35, textAlign: 'right' }}>
+                        {split.elevation_difference >= 0 ? '+' : ''}{split.elevation_difference}m
+                      </Text>
+                    )}
                   </View>
                 );
               })}
@@ -447,6 +452,84 @@ export default function RunDetailScreen() {
                 </View>
                 <Text style={{ fontSize: FONT_SIZES.xs, color: COLORS.textMuted }}>Avg: {run.avg_pace}/km</Text>
               </View>
+            </View>
+          );
+        })()}
+
+        {/* Pace Zones */}
+        {run.splits && run.splits.length > 0 && (() => {
+          const paceToSecs = (p: string) => {
+            const pts = p.split(':');
+            return pts.length === 2 ? parseInt(pts[0]) * 60 + parseInt(pts[1]) : 0;
+          };
+          const avgPaceSecs = paceToSecs(run.avg_pace || '');
+          if (avgPaceSecs <= 0) return null;
+
+          // Define pace zones relative to avg pace
+          const zones = [
+            { label: 'Z6', name: 'Sprint', range: `< ${Math.floor(avgPaceSecs * 0.75 / 60)}:${String(Math.round(avgPaceSecs * 0.75 % 60)).padStart(2, '0')}`, max: avgPaceSecs * 0.75, color: '#dc2626' },
+            { label: 'Z5', name: 'Interval', range: `${Math.floor(avgPaceSecs * 0.75 / 60)}:${String(Math.round(avgPaceSecs * 0.75 % 60)).padStart(2, '0')}-${Math.floor(avgPaceSecs * 0.85 / 60)}:${String(Math.round(avgPaceSecs * 0.85 % 60)).padStart(2, '0')}`, max: avgPaceSecs * 0.85, color: '#f97316' },
+            { label: 'Z4', name: 'Soglia', range: `${Math.floor(avgPaceSecs * 0.85 / 60)}:${String(Math.round(avgPaceSecs * 0.85 % 60)).padStart(2, '0')}-${Math.floor(avgPaceSecs * 0.95 / 60)}:${String(Math.round(avgPaceSecs * 0.95 % 60)).padStart(2, '0')}`, max: avgPaceSecs * 0.95, color: '#eab308' },
+            { label: 'Z3', name: 'Ritmo', range: `${Math.floor(avgPaceSecs * 0.95 / 60)}:${String(Math.round(avgPaceSecs * 0.95 % 60)).padStart(2, '0')}-${Math.floor(avgPaceSecs * 1.05 / 60)}:${String(Math.round(avgPaceSecs * 1.05 % 60)).padStart(2, '0')}`, max: avgPaceSecs * 1.05, color: '#22c55e' },
+            { label: 'Z2', name: 'Resistenza', range: `${Math.floor(avgPaceSecs * 1.05 / 60)}:${String(Math.round(avgPaceSecs * 1.05 % 60)).padStart(2, '0')}-${Math.floor(avgPaceSecs * 1.15 / 60)}:${String(Math.round(avgPaceSecs * 1.15 % 60)).padStart(2, '0')}`, max: avgPaceSecs * 1.15, color: '#3b82f6' },
+            { label: 'Z1', name: 'Recupero', range: `> ${Math.floor(avgPaceSecs * 1.15 / 60)}:${String(Math.round(avgPaceSecs * 1.15 % 60)).padStart(2, '0')}`, max: Infinity, color: '#6b7280' },
+          ];
+
+          // Count splits in each zone
+          const zoneCounts: { [key: string]: number } = {};
+          zones.forEach(z => zoneCounts[z.label] = 0);
+
+          for (const sp of run.splits) {
+            const spSecs = paceToSecs(sp.pace);
+            if (spSecs <= 0) continue;
+            if (spSecs < avgPaceSecs * 0.75) zoneCounts['Z6']++;
+            else if (spSecs < avgPaceSecs * 0.85) zoneCounts['Z5']++;
+            else if (spSecs < avgPaceSecs * 0.95) zoneCounts['Z4']++;
+            else if (spSecs < avgPaceSecs * 1.05) zoneCounts['Z3']++;
+            else if (spSecs < avgPaceSecs * 1.15) zoneCounts['Z2']++;
+            else zoneCounts['Z1']++;
+          }
+
+          const totalSplits = run.splits.length;
+
+          return (
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Ionicons name="speedometer" size={18} color={COLORS.blue} />
+                <Text style={styles.cardTitle}>ZONE DI PASSO</Text>
+              </View>
+              <Text style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 12, fontStyle: 'italic' }}>
+                In base al passo medio di {run.avg_pace}/km
+              </Text>
+              {zones.map(z => {
+                const count = zoneCounts[z.label];
+                const pct = totalSplits > 0 ? Math.round((count / totalSplits) * 100) : 0;
+                return (
+                  <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+                    <View style={{ width: 24, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 11, color: z.color, fontWeight: '800' }}>{z.label}</Text>
+                    </View>
+                    <View style={{ flex: 1, height: 20, backgroundColor: COLORS.bg, borderRadius: 6, overflow: 'hidden' }}>
+                      <View style={{
+                        height: 20,
+                        width: `${Math.max(pct > 0 ? 3 : 0, pct)}%`,
+                        backgroundColor: z.color + '40',
+                        borderRadius: 6,
+                        justifyContent: 'center',
+                        paddingLeft: 4,
+                      }}>
+                        {pct >= 10 && (
+                          <Text style={{ fontSize: 9, color: z.color, fontWeight: '800' }}>{pct}%</Text>
+                        )}
+                      </View>
+                    </View>
+                    {pct > 0 && pct < 10 && (
+                      <Text style={{ fontSize: 9, color: z.color, fontWeight: '800', width: 28 }}>{pct}%</Text>
+                    )}
+                    <Text style={{ fontSize: 9, color: COLORS.textMuted, width: 65 }}>{z.range}</Text>
+                  </View>
+                );
+              })}
             </View>
           );
         })()}
@@ -1040,6 +1123,30 @@ const styles = StyleSheet.create({
     paddingTop: SPACING.md,
     borderTopWidth: 1,
     borderTopColor: COLORS.cardBorder,
+  },
+
+  /* pace zones card */
+  card: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginBottom: SPACING.md,
+  },
+  cardTitle: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginBottom: SPACING.md,
   },
 
   /* extra stats (cadence, elevation) */
