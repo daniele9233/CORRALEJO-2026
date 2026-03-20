@@ -26,6 +26,11 @@ STRAVA_INITIAL_ACCESS_TOKEN = os.environ.get('STRAVA_ACCESS_TOKEN', '')
 STRAVA_INITIAL_REFRESH_TOKEN = os.environ.get('STRAVA_REFRESH_TOKEN', '')
 
 app = FastAPI()
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "app": "Corralejo 2026"}
+
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -937,6 +942,12 @@ def get_test_schedule():
     ]
 
 # ====== ENDPOINTS ======
+
+@api_router.get("/health")
+async def health_check():
+    """Health check endpoint for Render."""
+    return {"status": "ok"}
+
 
 @api_router.post("/seed")
 async def seed_data():
