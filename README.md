@@ -356,7 +356,7 @@ Storico evoluzione prestazioni:
 - **Cadenza**: grafico mensile con target 180 spm da Strava (touch tooltip con drag)
 - **Efficienza Aerobica (trend)**: grafico decoupling settimanale con zone colorate (verde/giallo/arancione/rosso), target 5%
 - **Distribuzione zone HR**: barre Z1-Z5 con soglie assolute BPM (Z1<117, Z2 117-146, Z3 147-160, Z4 161-175, Z5>175), barre allineate con percentuali fisse a destra
-- **Previsioni gara (VDOT Daniels)**: 5km, 10km, 21.1km, 42.2km basate su VDOT calcolato SOLO da corse complete (NO segmenti/splits per evitare VDOT gonfiati). Validazione pace 2:30-9:00/km, cap VDOT 65. Grafico storico interattivo (touch/drag con tooltip data+pace+VDOT), filtri per periodo (Oggi/1M/3M/6M), tabs distanza, frecce trend miglioramento/peggioramento, rolling window 8 settimane con decay 0.4/settimana
+- **Previsioni gara (VDOT Daniels)**: 5km, 10km, 21.1km, 42.2km basate su VDOT calcolato SOLO da corse complete (NO segmenti/splits per evitare VDOT gonfiati). Validazione pace 2:30-9:00/km, cap VDOT 65. Tabella storica **mese per mese** (da Apr 2025 a oggi) con tempo, passo, VDOT e trend. Filtri per periodo (Oggi/1M/3M/6M) con visualizzazione tempo/pace reale del periodo passato. Tabs distanza. Rolling window 8 settimane con decay 0.4/settimana
 - **Best efforts**: migliori prestazioni per distanza con passo e FC
 
 ### 12. 🏆 Badge e Trofei
@@ -808,6 +808,8 @@ npx expo run:android
 - [x] **Fix previsioni gara v2** — Previsioni ora basate su VDOT calcolato dalla soglia anaerobica (non dal best effort gonfiato). Aggiunto fattore fatica per distanze lunghe (1.02x HM, 1.04x Marathon). Valori coerenti con tabella Strava reale
 - [x] **Tabella previsioni gara** — Su Progressi, sostituito grafico con tabella interattiva: data, tempo, passo, VDOT, trend (frecce verdi/rosse). Filtri periodo Oggi/1M/3M/6M e distanza
 - [x] **Fix FC max da profilo** — Zone HR ora usano FC max reale dal profilo utente invece di valore hardcoded 180
+- [x] **Fix badge reset** — Badge ora filtrano best_efforts e vo2max_history dal 23 marzo 2026. Nessun badge si sblocca prima della data di inizio
+- [x] **Previsioni mensili** — Tabella previsioni ora aggregata per mese (Apr 2025 → oggi) invece di per singola corsa. Trend mostra tempo/passo reale del periodo passato invece di secondi
 
 ---
 
