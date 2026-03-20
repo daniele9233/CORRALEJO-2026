@@ -808,8 +808,9 @@ npx expo run:android
 - [x] **Fix previsioni gara v2** — Previsioni ora basate su VDOT calcolato dalla soglia anaerobica (non dal best effort gonfiato). Aggiunto fattore fatica per distanze lunghe (1.02x HM, 1.04x Marathon). Valori coerenti con tabella Strava reale
 - [x] **Tabella previsioni gara** — Su Progressi, sostituito grafico con tabella interattiva: data, tempo, passo, VDOT, trend (frecce verdi/rosse). Filtri periodo Oggi/1M/3M/6M e distanza
 - [x] **Fix FC max da profilo** — Zone HR ora usano FC max reale dal profilo utente invece di valore hardcoded 180
-- [x] **Fix badge reset** — Badge ora filtrano best_efforts e vo2max_history dal 23 marzo 2026. Nessun badge si sblocca prima della data di inizio
+- [x] **Fix badge reset** — Badge ora filtrano best_efforts e vo2max_history dal 23 marzo 2026. VDOT per badge usa solo valori registrati dopo il 23/03. Nessun badge si sblocca prima della data di inizio
 - [x] **Previsioni mensili** — Tabella previsioni ora aggregata per mese (Apr 2025 → oggi) invece di per singola corsa. Trend mostra tempo/passo reale del periodo passato invece di secondi
+- [x] **Health check endpoint** — Aggiunto `GET /api/health` e `GET /` per Render health checks
 
 ---
 
