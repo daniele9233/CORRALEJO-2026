@@ -63,4 +63,5 @@ export const api = {
   getPredictionHistory: () => apiFetch('/prediction-history'),
   getBestEfforts: () => apiFetch('/best-efforts'),
   getBadges: () => apiFetch('/badges'),
+  getAvatar: () => apiFetch('/avatar'),
 };

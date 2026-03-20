@@ -811,6 +811,8 @@ npx expo run:android
 - [x] **Fix badge reset** — Badge ora filtrano best_efforts e vo2max_history dal 23 marzo 2026. VDOT per badge usa solo valori registrati dopo il 23/03. Nessun badge si sblocca prima della data di inizio
 - [x] **Previsioni mensili** — Tabella previsioni ora aggregata per mese (Apr 2025 → oggi) invece di per singola corsa. Trend mostra tempo/passo reale del periodo passato invece di secondi
 - [x] **Health check endpoint** — Aggiunto `GET /api/health` e `GET /` per Render health checks
+- [x] **CRPE - Composite Race Prediction Engine** — Previsioni gara completamente riscritte con motore composito: Riegel Best Effort con correzione HR (50%), VDOT Daniels (30%), Soglia Anaerobica (20%). Tabella mensile da Gen 2025 a oggi con miglior prestazione del mese, previsioni per 5K/10K/HM/Maratona, trend mese-su-mese. Filtri periodo (Tutti/1M/3M/6M)
+- [x] **Avatar Runner** — Schermata avatar con 4 viste (Aspetto, Statistiche, Equipaggiamento, Museo). Avatar SVG con equipaggiamento basato su VDOT (4 tier: Beginner/Intermediate/Advanced/Elite), postura basata su Injury Risk, aura animata basata su efficienza cardiaca. Museo con istantanee mensili. Endpoint `GET /api/avatar`. Accessibile da Profilo → Medaglie
 
 ---
 

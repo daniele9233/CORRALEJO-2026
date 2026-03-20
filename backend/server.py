@@ -3712,184 +3712,267 @@ async def get_decoupling_history():
 @api_router.get("/prediction-history")
 async def get_prediction_history():
     """
-    Race predictions based on VDOT analysis (Daniels' Running Formula).
+    Composite Race Prediction Engine (CRPE).
 
-    Uses ONLY full-run data with strict pace validation to avoid inflated VDOT.
-    Segments from splits are validated individually: each km split must have
-    a realistic elapsed_time (between 150s and 600s per km).
+    Combines 3 methods weighted by reliability:
+    - Method 1 (50%): Riegel Best Effort with HR correction
+    - Method 2 (30%): VDOT-based from Daniels
+    - Method 3 (20%): Threshold Pace from profile
 
-    Rolling 8-week window with VDOT decay for inactivity periods.
+    Monthly aggregation from 2025 to present.
     """
     from datetime import date as dt_date
 
+    MONTH_LABELS = {
+        1: "Gennaio", 2: "Febbraio", 3: "Marzo", 4: "Aprile",
+        5: "Maggio", 6: "Giugno", 7: "Luglio", 8: "Agosto",
+        9: "Settembre", 10: "Ottobre", 11: "Novembre", 12: "Dicembre",
+    }
+
+    MIN_DISTANCE_KM = 3.0
+    MIN_PACE_SEC = 150   # 2:30/km
+    MAX_PACE_SEC = 540   # 9:00/km
+    MAX_VDOT_CAP = 65.0
+
+    TARGET_DISTANCES = [("5km", 5.0), ("10km", 10.0), ("21.1km", 21.1), ("42.2km", 42.195)]
+    FATIGUE = {"5km": 1.0, "10km": 1.0, "21.1km": 1.02, "42.2km": 1.04}
+    RIEGEL_EXP = 1.06
+
+    # Weight for each method
+    W_RIEGEL = 0.50
+    W_VDOT = 0.30
+    W_THRESHOLD = 0.20
+
+    # ---- helpers ----
+    def _fmt_time(minutes: float) -> str:
+        total_secs = int(round(minutes * 60))
+        h = total_secs // 3600
+        m = (total_secs % 3600) // 60
+        s = total_secs % 60
+        return f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
+
+    def _fmt_pace(minutes: float, dist_km: float) -> str:
+        pace_s = (minutes * 60) / dist_km
+        return f"{int(pace_s // 60)}:{int(pace_s % 60):02d}"
+
+    def _riegel(t1: float, d1: float, d2: float) -> float:
+        """Riegel formula: T2 = T1 * (D2/D1)^1.06. t1 in minutes."""
+        return t1 * (d2 / d1) ** RIEGEL_EXP
+
+    def _effort_score(dist: float, avg_hr: float, max_hr: float) -> float:
+        """Score a run: distance * (avg_hr / max_hr). Higher = better effort."""
+        if not avg_hr or not max_hr or max_hr <= 0:
+            return dist * 0.75  # assume moderate effort if no HR
+        return dist * (avg_hr / max_hr)
+
+    def _hr_correct_time(time_min: float, avg_hr: float, max_hr: float) -> float:
+        """If avg_hr < 90% max_hr, runner wasn't at full effort. Correct downward."""
+        if not avg_hr or not max_hr or max_hr <= 0:
+            return time_min
+        ratio = avg_hr / max_hr
+        if ratio >= 0.90:
+            return time_min
+        return time_min * (ratio ** 0.8)
+
+    # ---- load data ----
     profile = await db.profile.find_one({}, {"_id": 0}) or {}
     max_hr = profile.get("max_hr", 180)
-
-    VDOT_MIN_DISTANCE_KM = 3.0
-    VDOT_MIN_HR_PCT = 0.80          # 80% HRmax for validated effort
-    ROLLING_WINDOW_DAYS = 56        # 8 weeks
-    MAX_VDOT_CAP = 65.0             # Cap: elite amateur level
-    MIN_PACE_SEC_PER_KM = 150       # 2:30/km — faster is rejected
-    MAX_PACE_SEC_PER_KM = 540       # 9:00/km — slower is rejected
-    VDOT_DECAY_PER_WEEK = 0.4       # VDOT decay per week of inactivity
+    vdot_paces = profile.get("vdot_paces", {})
 
     all_runs = await db.runs.find(
         {"date": {"$gte": "2025-01-01"}},
         {"_id": 0, "date": 1, "distance_km": 1, "duration_minutes": 1,
-         "avg_pace": 1, "avg_hr": 1, "splits": 1}
+         "avg_pace": 1, "avg_hr": 1}
     ).sort("date", 1).to_list(5000)
 
-    if not all_runs:
-        return {"prediction_history": [], "current": {}, "trends": {}}
+    # ---- Method 3: Threshold-based VDOT (constant across months) ----
+    threshold_vdot = None
+    threshold_pace_str = vdot_paces.get("threshold", "")
+    if threshold_pace_str:
+        thresh_secs = _pace_to_seconds(threshold_pace_str)
+        if thresh_secs > 0:
+            # Threshold pace ≈ 88% VO2max → run 1 km at threshold pace, compute VDOT
+            # Use a standard threshold distance (e.g. 1 km at threshold pace) then
+            # back-calculate: threshold is ~88% of VDOT, so actual VDOT = computed / 0.88
+            thresh_1km_min = thresh_secs / 60.0
+            raw_vdot = calculate_vdot_from_race(1.0, thresh_1km_min)
+            if raw_vdot:
+                threshold_vdot = min(raw_vdot / 0.88, MAX_VDOT_CAP)
 
-    target_distances = [("5km", 5), ("10km", 10), ("21.1km", 21.1), ("42.2km", 42.195)]
+    # ---- group runs by month ----
+    today = dt_date.today()
+    start_year, start_month = 2025, 1
+    end_year, end_month = today.year, today.month
 
-    # ---- Step 1: Calculate VDOT for each run with strict validation ----
-    run_vdots = []
+    # Build list of all months from 2025-01 to current
+    all_months = []
+    y, m = start_year, start_month
+    while (y, m) <= (end_year, end_month):
+        all_months.append((y, m))
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+
+    # Index valid runs by month
+    runs_by_month: dict[tuple[int, int], list] = {mo: [] for mo in all_months}
     for run in all_runs:
         dist = run.get("distance_km", 0)
         dur = run.get("duration_minutes", 0)
         run_date = run.get("date", "")
-        avg_hr = run.get("avg_hr")
-        splits = run.get("splits", [])
+        if not run_date or dist < MIN_DISTANCE_KM or dur <= 0:
+            continue
+        pace_s = (dur * 60) / dist
+        if pace_s < MIN_PACE_SEC or pace_s > MAX_PACE_SEC:
+            continue
+        try:
+            rd = dt_date.fromisoformat(run_date[:10])
+        except ValueError:
+            continue
+        key = (rd.year, rd.month)
+        if key in runs_by_month:
+            runs_by_month[key].append(run)
 
-        if dist < VDOT_MIN_DISTANCE_KM or dur <= 0 or not run_date:
+    # ---- build monthly predictions ----
+    prediction_history = []
+
+    for (yr, mo) in all_months:
+        month_key = f"{yr}-{mo:02d}"
+        month_label = f"{MONTH_LABELS[mo]} {yr}"
+        month_runs = runs_by_month[(yr, mo)]
+
+        if not month_runs:
+            prediction_history.append({
+                "month": month_key,
+                "month_label": month_label,
+                "best_effort": "nessuna attività significativa",
+                "best_effort_distance": None,
+                "best_effort_time": None,
+                "best_effort_pace": None,
+                "best_effort_hr": None,
+                "vdot": None,
+                "predictions": None,
+            })
             continue
 
-        # Validate full-run pace range
-        run_pace_sec = (dur * 60) / dist
-        if run_pace_sec < MIN_PACE_SEC_PER_KM or run_pace_sec > MAX_PACE_SEC_PER_KM:
-            continue
+        # Find best run: scored by distance * (avg_hr / max_hr)
+        best_run = max(month_runs, key=lambda r: _effort_score(
+            r.get("distance_km", 0),
+            r.get("avg_hr", 0) or 0,
+            max_hr
+        ))
+        b_dist = best_run.get("distance_km", 0)
+        b_dur = best_run.get("duration_minutes", 0)
+        b_hr = best_run.get("avg_hr")
+        b_pace_s = (b_dur * 60) / b_dist
+        b_pace_str = f"{int(b_pace_s // 60)}:{int(b_pace_s % 60):02d}"
+        b_time_str = _fmt_time(b_dur)
 
-        # Check if validated effort (race-like HR)
-        is_validated = False
-        if avg_hr and max_hr > 0:
-            hr_pct = avg_hr / max_hr
-            if hr_pct >= VDOT_MIN_HR_PCT:
-                is_validated = True
+        best_effort_desc = f"{b_dist:.2f} km in {b_time_str} ({b_pace_str}/km"
+        if b_hr:
+            best_effort_desc += f", FC {int(b_hr)}"
+        best_effort_desc += ")"
 
-        # VDOT from full run
-        run_vdot = calculate_vdot_from_race(dist, dur)
-        if not run_vdot or run_vdot > MAX_VDOT_CAP:
-            if run_vdot and run_vdot > MAX_VDOT_CAP:
-                run_vdot = MAX_VDOT_CAP
-            elif not run_vdot:
-                continue
+        # ---- Method 1: Riegel Best Effort (50%) ----
+        # HR-corrected time for Riegel projection
+        corrected_time = _hr_correct_time(b_dur, b_hr, max_hr)
 
-        best_vdot_for_run = run_vdot
+        riegel_preds = {}
+        for tname, tkm in TARGET_DISTANCES:
+            t_proj = _riegel(corrected_time, b_dist, tkm)
+            t_proj *= FATIGUE[tname]
+            riegel_preds[tname] = t_proj
 
-        # No segment-based VDOT: use only full-run VDOT for accurate predictions
+        # ---- Method 2: VDOT-based (30%) ----
+        run_vdot = calculate_vdot_from_race(b_dist, b_dur)
+        if run_vdot and run_vdot > MAX_VDOT_CAP:
+            run_vdot = MAX_VDOT_CAP
 
-        run_vdots.append({
-            "date": run_date[:10],
-            "vdot": round(best_vdot_for_run, 1),
-            "is_validated": is_validated,
-            "distance_km": dist,
-            "duration_min": dur,
-        })
+        vdot_preds = {}
+        if run_vdot:
+            for tname, tkm in TARGET_DISTANCES:
+                pt = predict_time_from_vdot(run_vdot, tkm)
+                if pt:
+                    vdot_preds[tname] = pt * FATIGUE[tname]
 
-    if not run_vdots:
-        return {"prediction_history": [], "current": {}, "trends": {}}
+        # ---- Method 3: Threshold Pace (20%) ----
+        thresh_preds = {}
+        if threshold_vdot:
+            for tname, tkm in TARGET_DISTANCES:
+                pt = predict_time_from_vdot(threshold_vdot, tkm)
+                if pt:
+                    thresh_preds[tname] = pt * FATIGUE[tname]
 
-    # ---- Step 3: Build prediction history with rolling window + decay ----
-    def _format_pred_time(pred_time_min):
-        """Format prediction time in minutes to readable string."""
-        total_secs = int(round(pred_time_min * 60))
-        hours = total_secs // 3600
-        mins = (total_secs % 3600) // 60
-        secs = total_secs % 60
-        if hours > 0:
-            return f"{hours}:{mins:02d}:{secs:02d}"
-        return f"{mins}:{secs:02d}"
+        # ---- Weighted composite ----
+        composite_preds = {}
+        for tname, tkm in TARGET_DISTANCES:
+            total_weight = 0.0
+            weighted_time = 0.0
 
-    prediction_snapshots = []
-    for i, rv in enumerate(run_vdots):
-        run_date = rv["date"]
-        run_dt = dt_date.fromisoformat(run_date)
-        cutoff_date = (run_dt - timedelta(days=ROLLING_WINDOW_DAYS)).isoformat()
+            if tname in riegel_preds:
+                weighted_time += W_RIEGEL * riegel_preds[tname]
+                total_weight += W_RIEGEL
+            if tname in vdot_preds:
+                weighted_time += W_VDOT * vdot_preds[tname]
+                total_weight += W_VDOT
+            if tname in thresh_preds:
+                weighted_time += W_THRESHOLD * thresh_preds[tname]
+                total_weight += W_THRESHOLD
 
-        # Best validated VDOT in the rolling window
-        window_entries = [
-            r for r in run_vdots[:i + 1]
-            if r["date"] >= cutoff_date and r["is_validated"]
-        ]
-
-        # Fallback: use all efforts if no validated ones
-        if not window_entries:
-            window_entries = [
-                r for r in run_vdots[:i + 1]
-                if r["date"] >= cutoff_date
-            ]
-
-        if not window_entries:
-            continue
-
-        # Apply VDOT decay: older efforts within the window lose value
-        best_vdot = 0.0
-        for entry in window_entries:
-            entry_dt = dt_date.fromisoformat(entry["date"])
-            weeks_ago = (run_dt - entry_dt).days / 7.0
-            decayed_vdot = entry["vdot"] - (weeks_ago * VDOT_DECAY_PER_WEEK)
-            if decayed_vdot > best_vdot:
-                best_vdot = decayed_vdot
-
-        if best_vdot <= 0:
-            continue
-
-        best_vdot = min(best_vdot, MAX_VDOT_CAP)
-
-        # ---- Step 4: Predict race times from VDOT ----
-        preds = {}
-        for tname, tkm in target_distances:
-            pred_time = predict_time_from_vdot(best_vdot, tkm)
-            if pred_time:
-                # Fatigue factor for longer distances
-                fatigue = {5: 1.0, 10: 1.0, 21.1: 1.02, 42.195: 1.04}
-                pred_time = pred_time * fatigue.get(tkm, 1.0)
-                pred_pace_s = (pred_time * 60) / tkm
-                preds[tname] = {
-                    "time_min": round(pred_time, 2),
-                    "time_str": _format_pred_time(pred_time),
-                    "pace": f"{int(pred_pace_s // 60)}:{int(pred_pace_s % 60):02d}",
+            if total_weight > 0:
+                final_time = weighted_time / total_weight
+                composite_preds[tname] = {
+                    "time_min": round(final_time, 2),
+                    "time_str": _fmt_time(final_time),
+                    "pace": _fmt_pace(final_time, tkm),
                 }
 
-        if preds:
-            prediction_snapshots.append({
-                "date": run_date,
-                "predictions": preds,
-                "vdot": round(best_vdot, 1),
-            })
+        effective_vdot = run_vdot if run_vdot else None
+        if effective_vdot:
+            effective_vdot = round(effective_vdot, 1)
 
-    # Deduplicate by date (keep last)
-    seen_dates = {}
-    for snap in prediction_snapshots:
-        seen_dates[snap["date"]] = snap
-    unique_snapshots = sorted(seen_dates.values(), key=lambda s: s["date"])
+        prediction_history.append({
+            "month": month_key,
+            "month_label": month_label,
+            "best_effort": best_effort_desc,
+            "best_effort_distance": round(b_dist, 2),
+            "best_effort_time": b_time_str,
+            "best_effort_pace": b_pace_str,
+            "best_effort_hr": int(b_hr) if b_hr else None,
+            "vdot": effective_vdot,
+            "predictions": composite_preds if composite_preds else None,
+        })
 
-    # Aggregate by month: keep best VDOT snapshot per month
-    monthly_snapshots = {}
-    for snap in unique_snapshots:
-        month_key = snap["date"][:7]  # "2025-04"
-        if month_key not in monthly_snapshots or snap["vdot"] > monthly_snapshots[month_key]["vdot"]:
-            monthly_snapshots[month_key] = snap
-    monthly_list = sorted(monthly_snapshots.values(), key=lambda s: s["date"])
+    # ---- current = latest month with predictions ----
+    current = {}
+    current_vdot_val = None
+    for entry in reversed(prediction_history):
+        if entry["predictions"]:
+            current = entry["predictions"]
+            current_vdot_val = entry["vdot"]
+            break
 
-    # Current predictions (from latest monthly snapshot)
-    current = monthly_list[-1]["predictions"] if monthly_list else {}
-    current_vdot_val = monthly_list[-1].get("vdot") if monthly_list else None
-
-    # ---- Step 5: Calculate trends with actual time/pace values ----
+    # ---- trends: compare current vs past months ----
     trends = {}
-    if len(monthly_list) >= 2:
-        for period_key, days_back in [("1m", 30), ("3m", 90), ("6m", 180)]:
-            cutoff = (dt_date.today() - timedelta(days=days_back)).isoformat()
+    months_with_preds = [e for e in prediction_history if e["predictions"]]
+    if len(months_with_preds) >= 2:
+        for period_key, months_back in [("1m", 1), ("3m", 3), ("6m", 6)]:
+            # Find the entry ~months_back before the latest
+            target_month = today.month - months_back
+            target_year = today.year
+            while target_month <= 0:
+                target_month += 12
+                target_year -= 1
+            target_key = f"{target_year}-{target_month:02d}"
+
             past_snap = None
-            for s in monthly_list:
-                if s["date"] <= cutoff:
-                    past_snap = s
+            for e in months_with_preds:
+                if e["month"] <= target_key:
+                    past_snap = e
                 else:
                     break
-            if past_snap:
+
+            if past_snap and past_snap["month"] != months_with_preds[-1]["month"]:
                 period_trends = {}
                 for dist_key in ["5km", "10km", "21.1km", "42.2km"]:
                     curr_pred = current.get(dist_key, {})
@@ -3905,10 +3988,11 @@ async def get_prediction_history():
                             "past_pace": past_pred.get("pace", ""),
                             "past_vdot": past_snap.get("vdot"),
                         }
-                trends[period_key] = period_trends
+                if period_trends:
+                    trends[period_key] = period_trends
 
     return {
-        "prediction_history": monthly_list,
+        "prediction_history": prediction_history,
         "current": current,
         "current_vdot": current_vdot_val,
         "trends": trends,
@@ -4100,6 +4184,251 @@ BADGE_DEFINITIONS = [
     {"id": "hour_run", "name": "Corsa da 1 ora", "cat": "fun", "cat_label": "🎉 Fun & Speciali", "desc": "Completa una corsa di almeno 60 minuti", "icon": "⏰", "target": 1},
     {"id": "two_hour_run", "name": "Corsa da 2 ore", "cat": "fun", "cat_label": "🎉 Fun & Speciali", "desc": "Completa una corsa di almeno 120 minuti", "icon": "⏰", "target": 1},
 ]
+
+
+@api_router.get("/avatar")
+async def get_avatar_data():
+    """
+    Avatar Runner data: equipment tier, posture, aura, museum snapshots.
+
+    Equipment tiers based on VDOT:
+    - VDOT < 40: "beginner" (cotton shirt, generic sneakers)
+    - VDOT 40-45: "intermediate" (running kit, daily trainers)
+    - VDOT 45-50: "advanced" (racing singlet, split shorts, GPS watch)
+    - VDOT > 50: "elite" (carbon shoes, speed sunglasses, headband)
+
+    Posture based on injury risk:
+    - injury_risk < 30: "proud" (upright, confident)
+    - injury_risk 30-50: "normal" (neutral)
+    - injury_risk > 50: "fatigued" (slouched)
+
+    Aura based on cardiac efficiency trend:
+    - No runs in 3 days: "off"
+    - Efficiency improving: "electric" (green glow)
+    - Foster monotony > 2.0: "heat" (red glow)
+    - Otherwise: "steady" (blue glow)
+    """
+    from datetime import date as dt_date
+
+    profile = await db.profile.find_one({}, {"_id": 0}) or {}
+    current_vdot = profile.get("current_vdot") or 0
+
+    # Get injury risk
+    injury_risk_score = 0
+    try:
+        # Get recent runs for injury risk calculation
+        recent_runs = await db.runs.find(
+            {"date": {"$gte": (dt_date.today() - timedelta(days=28)).isoformat()}},
+            {"_id": 0, "date": 1, "distance_km": 1, "duration_minutes": 1, "avg_hr": 1}
+        ).sort("date", -1).to_list(100)
+
+        if len(recent_runs) >= 3:
+            # Simple injury risk: volume spike detection
+            last_7 = sum(r.get("distance_km", 0) for r in recent_runs if r.get("date", "") >= (dt_date.today() - timedelta(days=7)).isoformat())
+            prev_21 = sum(r.get("distance_km", 0) for r in recent_runs if r.get("date", "") < (dt_date.today() - timedelta(days=7)).isoformat())
+            avg_weekly = prev_21 / 3 if prev_21 > 0 else last_7
+            if avg_weekly > 0:
+                ratio = last_7 / avg_weekly
+                injury_risk_score = min(100, max(0, int((ratio - 1.0) * 100)))
+    except:
+        pass
+
+    # Equipment tier
+    if current_vdot >= 50:
+        equipment_tier = "elite"
+        equipment = {
+            "shoes": "Scarpe in carbonio (super shoes)",
+            "outfit": "Canotta da gara + split shorts",
+            "accessories": "Occhiali speed + fascia antisudore",
+            "shoes_icon": "flash",
+            "outfit_icon": "shirt",
+            "accessories_icon": "glasses",
+        }
+    elif current_vdot >= 45:
+        equipment_tier = "advanced"
+        equipment = {
+            "shoes": "Scarpe da gara leggere",
+            "outfit": "Canotta da gara + split shorts",
+            "accessories": "Orologio GPS",
+            "shoes_icon": "footsteps",
+            "outfit_icon": "shirt",
+            "accessories_icon": "watch",
+        }
+    elif current_vdot >= 40:
+        equipment_tier = "intermediate"
+        equipment = {
+            "shoes": "Daily Trainer ammortizzate",
+            "outfit": "Kit tecnico da running",
+            "accessories": "Fascia cardio",
+            "shoes_icon": "footsteps",
+            "outfit_icon": "shirt",
+            "accessories_icon": "heart",
+        }
+    else:
+        equipment_tier = "beginner"
+        equipment = {
+            "shoes": "Scarpe da ginnastica generiche",
+            "outfit": "Maglietta di cotone larga",
+            "accessories": "Nessuno",
+            "shoes_icon": "walk",
+            "outfit_icon": "shirt",
+            "accessories_icon": "remove-circle",
+        }
+
+    # Posture
+    if injury_risk_score < 30:
+        posture = "proud"
+        posture_label = "Dritto e fiero"
+        posture_icon = "arrow-up-circle"
+    elif injury_risk_score <= 50:
+        posture = "normal"
+        posture_label = "Postura neutra"
+        posture_icon = "remove-circle"
+    else:
+        posture = "fatigued"
+        posture_label = "Segni di affaticamento"
+        posture_icon = "arrow-down-circle"
+
+    # Aura
+    last_run_date = None
+    try:
+        last_run = await db.runs.find_one({}, {"_id": 0, "date": 1}, sort=[("date", -1)])
+        if last_run:
+            last_run_date = last_run.get("date", "")[:10]
+    except:
+        pass
+
+    days_since_run = 999
+    if last_run_date:
+        try:
+            days_since_run = (dt_date.today() - dt_date.fromisoformat(last_run_date)).days
+        except:
+            pass
+
+    if days_since_run > 3:
+        aura = "off"
+        aura_label = "Inattivo"
+        aura_color = "#666666"
+    else:
+        # Check Foster monotony from recent training
+        try:
+            week_loads = []
+            for r in (recent_runs or []):
+                if r.get("date", "") >= (dt_date.today() - timedelta(days=7)).isoformat():
+                    dur = r.get("duration_minutes", 0)
+                    avg_hr = r.get("avg_hr", 0) or 0
+                    max_hr = profile.get("max_hr", 180)
+                    if dur > 0 and avg_hr > 0 and max_hr > 0:
+                        trimp = dur * (avg_hr / max_hr)
+                        week_loads.append(trimp)
+
+            if len(week_loads) >= 3:
+                import statistics
+                avg_load = statistics.mean(week_loads)
+                std_load = statistics.stdev(week_loads) if len(week_loads) > 1 else 0
+                monotony = avg_load / std_load if std_load > 0 else 1.0
+                if monotony > 2.0:
+                    aura = "heat"
+                    aura_label = "Surriscaldato (monotonia alta)"
+                    aura_color = "#ef4444"
+                else:
+                    aura = "electric"
+                    aura_label = "Efficienza in crescita"
+                    aura_color = "#22c55e"
+            else:
+                aura = "electric"
+                aura_label = "Efficienza in crescita"
+                aura_color = "#22c55e"
+        except:
+            aura = "steady"
+            aura_label = "Stabile"
+            aura_color = "#3b82f6"
+
+    # Training phase
+    total_km_all = 0
+    total_runs = 0
+    try:
+        all_runs_count = await db.runs.find(
+            {"date": {"$gte": "2026-03-23"}},
+            {"_id": 0, "distance_km": 1}
+        ).to_list(5000)
+        total_km_all = round(sum(r.get("distance_km", 0) for r in all_runs_count), 1)
+        total_runs = len(all_runs_count)
+    except:
+        pass
+
+    # Phase determination
+    weeks_training = max(1, total_runs // 3) if total_runs > 0 else 0
+    if weeks_training <= 4:
+        phase = "recovery"
+        phase_label = "Fase Ripresa"
+    elif weeks_training <= 16:
+        phase = "development"
+        phase_label = "Fase Sviluppo"
+    elif weeks_training <= 28:
+        phase = "specific"
+        phase_label = "Preparazione Specifica"
+    else:
+        phase = "peak"
+        phase_label = "Forma Massima"
+
+    # Museum: monthly snapshots
+    museum = []
+    vo2max_history = await db.vo2max_history.find({}, {"_id": 0}).sort("date", 1).to_list(500)
+    monthly_vdots = {}
+    for v in vo2max_history:
+        d = v.get("date", "")[:7]
+        if d:
+            monthly_vdots[d] = v.get("vdot", 0)
+
+    month_labels = {
+        1: "Gen", 2: "Feb", 3: "Mar", 4: "Apr", 5: "Mag", 6: "Giu",
+        7: "Lug", 8: "Ago", 9: "Set", 10: "Ott", 11: "Nov", 12: "Dic",
+    }
+
+    for month_key, vdot_val in sorted(monthly_vdots.items()):
+        try:
+            parts = month_key.split("-")
+            yr = int(parts[0])
+            mo = int(parts[1])
+            label = f"{month_labels.get(mo, '?')} {yr}"
+        except:
+            label = month_key
+
+        if vdot_val >= 50:
+            tier = "elite"
+        elif vdot_val >= 45:
+            tier = "advanced"
+        elif vdot_val >= 40:
+            tier = "intermediate"
+        else:
+            tier = "beginner"
+
+        museum.append({
+            "month": month_key,
+            "label": label,
+            "vdot": round(vdot_val, 1),
+            "tier": tier,
+        })
+
+    return {
+        "vdot": round(current_vdot, 1),
+        "equipment_tier": equipment_tier,
+        "equipment": equipment,
+        "posture": posture,
+        "posture_label": posture_label,
+        "posture_icon": posture_icon,
+        "injury_risk": injury_risk_score,
+        "aura": aura,
+        "aura_label": aura_label,
+        "aura_color": aura_color,
+        "phase": phase,
+        "phase_label": phase_label,
+        "total_km": total_km_all,
+        "total_runs": total_runs,
+        "days_since_run": days_since_run,
+        "museum": museum,
+    }
 
 
 async def compute_badges() -> list:
