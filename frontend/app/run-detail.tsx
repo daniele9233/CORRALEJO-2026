@@ -696,64 +696,7 @@ export default function RunDetailScreen() {
           </View>
         )}
 
-        {/* Race Predictions with Trends */}
-        {racePredictions && Object.keys(racePredictions).length > 0 && (
-          <View style={styles.splitsCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm }}>
-              <Ionicons name="trophy" size={18} color={COLORS.lime} />
-              <Text style={styles.hrTitle}>PREVISIONI GARA</Text>
-            </View>
-            <Text style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: SPACING.md, fontStyle: 'italic' }}>
-              Basate sulla tua forma attuale
-            </Text>
-            {Object.entries(racePredictions).map(([dist, pred]: [string, any]) => {
-              const isGoal = dist === '21.1km';
-              const trend = predictionTrends?.[dist];
-              return (
-                <View key={dist} style={{
-                  flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-                  paddingVertical: SPACING.sm,
-                  borderBottomWidth: 1, borderBottomColor: COLORS.cardBorder,
-                  ...(isGoal ? { backgroundColor: COLORS.lime + '08', marginHorizontal: -SPACING.sm, paddingHorizontal: SPACING.sm, borderRadius: BORDER_RADIUS.sm } : {}),
-                }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.xs }}>
-                    <Text style={{ fontSize: FONT_SIZES.body, color: isGoal ? COLORS.lime : COLORS.text, fontWeight: '900' }}>{dist}</Text>
-                    {isGoal && (
-                      <View style={{ backgroundColor: COLORS.lime + '20', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6 }}>
-                        <Text style={{ fontSize: 8, color: COLORS.lime, fontWeight: '800' }}>OBIETTIVO</Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: FONT_SIZES.body, color: COLORS.text, fontWeight: '800' }}>{pred.predicted_time_str}</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Text style={{ fontSize: 10, color: COLORS.textMuted }}>{pred.predicted_pace}/km</Text>
-                      {trend && trend.diff_seconds !== 0 && (
-                        <View style={{
-                          flexDirection: 'row', alignItems: 'center',
-                          backgroundColor: trend.improved ? '#22c55e20' : '#ef444420',
-                          paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4,
-                        }}>
-                          <Ionicons
-                            name={trend.improved ? "caret-down" : "caret-up"}
-                            size={10}
-                            color={trend.improved ? '#22c55e' : '#ef4444'}
-                          />
-                          <Text style={{
-                            fontSize: 9, fontWeight: '800',
-                            color: trend.improved ? '#22c55e' : '#ef4444',
-                          }}>
-                            {Math.abs(trend.diff_seconds)}s
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        )}
+        {/* Race Predictions section removed */}
 
         {/* AI Analysis */}
         <View style={styles.aiSection}>
