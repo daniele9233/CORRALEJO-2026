@@ -4108,14 +4108,23 @@ async def compute_badges() -> list:
     from datetime import date as dt_date
 
     BADGE_START_DATE = "2026-03-23"
+
+    def _date_str(val) -> str:
+        """Safely convert any date value to 'YYYY-MM-DD' string."""
+        if val is None:
+            return ""
+        if isinstance(val, (datetime, date)):
+            return val.strftime("%Y-%m-%d")
+        return str(val)[:10]
+
     runs = await db.runs.find({"date": {"$gte": BADGE_START_DATE}}, {"_id": 0}).sort("date", 1).to_list(5000)
     profile = await db.profile.find_one({}, {"_id": 0}) or {}
     # Filter best_efforts to only include those from badge start date onwards
     all_best_efforts = await db.best_efforts.find({}, {"_id": 0}).to_list(200)
-    best_efforts_docs = [be for be in all_best_efforts if (be.get("run_date") or "") >= BADGE_START_DATE]
+    best_efforts_docs = [be for be in all_best_efforts if _date_str(be.get("run_date")) >= BADGE_START_DATE]
     # Filter vo2max_history to only include from badge start date
     all_vo2max = await db.vo2max_history.find({}, {"_id": 0}).sort("date", 1).to_list(500)
-    vo2max_history = [v for v in all_vo2max if (v.get("date") or "") >= BADGE_START_DATE]
+    vo2max_history = [v for v in all_vo2max if _date_str(v.get("date")) >= BADGE_START_DATE]
     training_weeks = await db.training_plan.find({"week_start": {"$gte": BADGE_START_DATE}}, {"_id": 0}).sort("week_start", 1).to_list(200)
 
     # Load existing badge states (for unlock dates)
