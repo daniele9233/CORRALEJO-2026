@@ -76,7 +76,7 @@ Progettata per un runner in fase di ritorno post-infortunio con obiettivo tempo 
 | **Visibilità** | Public |
 | **Package Android** | `com.kikkoderiso.corralejo` |
 | **URL Scheme** | `corralejo://` |
-| **EAS Project ID** | `a48df678-6b21-4c17-9033-76216bd17940` (account daniele9233, da ritrasferire a kikkoderiso dopo 01/04/2026) |
+| **EAS Project ID** | `704bb244-c2c0-4a31-9c39-012fa3b87d6c` (account gamess9233) |
 
 ### Struttura Repository
 ```
@@ -102,6 +102,7 @@ CORRALEJO-2026/
 │   │   ├── progressi.tsx      # Storico VO2max/soglia/previsioni
 │   │   ├── calcolatore.tsx    # Calcolatore passi e previsioni
 │   │   ├── injury-risk.tsx    # Injury Risk Score (analisi predittiva)
+│   │   ├── badges.tsx         # Badge e Trofei (100+ badge, 8 categorie)
 │   │   └── strava-callback.tsx# OAuth callback Strava
 │   ├── src/
 │   │   ├── api.ts             # Client API (tutte le chiamate)
@@ -270,7 +271,6 @@ Vista completa del piano di 38 settimane:
 Analytics avanzate sulle prestazioni:
 - **Gauge VO2max**: valore corrente vs target (per passo 4:30/km)
 - **Card obiettivo mezza**: tempo target 1:35:00, tempo predetto attuale, gap, % progresso
-- **Previsioni gara**: 5km, 10km, 15km, 21.1km, 42.2km
 - **Soglia anaerobica**: dati correnti
 - **Best efforts**: migliori prestazioni per distanza
 - **Volume settimanale**: distribuzione km per zona
@@ -356,7 +356,8 @@ Storico evoluzione prestazioni:
 - **Cadenza**: grafico mensile con target 180 spm da Strava (touch tooltip con drag)
 - **Efficienza Aerobica (trend)**: grafico decoupling settimanale con zone colorate (verde/giallo/arancione/rosso), target 5%
 - **Distribuzione zone HR**: barre Z1-Z5 con soglie assolute BPM (Z1<117, Z2 117-146, Z3 147-160, Z4 161-175, Z5>175), barre allineate con percentuali fisse a destra
-- **Previsioni gara (VDOT Daniels)**: 5km, 10km, 21.1km, 42.2km basate su VDOT calcolato SOLO da corse complete (NO segmenti/splits per evitare VDOT gonfiati). Validazione pace 2:30-9:00/km, cap VDOT 65. Tabella storica **mese per mese** (da Apr 2025 a oggi) con tempo, passo, VDOT e trend. Filtri per periodo (Oggi/1M/3M/6M) con visualizzazione tempo/pace reale del periodo passato. Tabs distanza. Rolling window 8 settimane con decay 0.4/settimana
+- **Fitness & Freshness (Banister)**: 3 card stato (Condizione/CTL, Affaticamento/ATL, Forma/TSB), mini chart con CTL dots e TSB bars, legenda interpretazione (Fresco/Neutro/Affaticato/Sovrallenamento)
+- **Previsioni gara v2 (VDOT Daniels)**: 5km, 10km, 21.1km, 42.2km basate su VDOT puro (NO Riegel). VDOT calcolato SOLO da corse complete, validazione pace 2:30-9:00/km, cap VDOT 55. Tabella storica **mese per mese** (da Gen 2025 a oggi) con tempo, passo, VDOT e trend. Filtri per periodo (Oggi/1M/3M/6M) con visualizzazione tempo/pace reale del periodo passato. Tabs distanza
 - **Best efforts**: migliori prestazioni per distanza con passo e FC
 
 ### 12. 🏆 Badge e Trofei
@@ -376,7 +377,6 @@ Ricalcolo automatico dopo ogni sync Strava.
 ### 13. 🧮 Calcolatore
 Strumenti di calcolo per il runner:
 - **Passi da VDOT**: mostra VDOT corrente e i 5 passi di Daniels
-- **Previsioni gara** (VDOT Daniels + Riegel): inserisci un PB e predice gli altri tempi
 - **Convertitore passo/velocità**: min:sec/km ↔ km/h
 
 ### 13. 🔗 Strava Callback
@@ -420,17 +420,37 @@ Gestione OAuth Strava:
 - Raccomandazioni personalizzate per la prossima sessione
 - Funziona anche per corse extra fuori dal piano
 
-### 4b. Injury Risk Score
-- Analisi predittiva del rischio infortunio
-- Fattori: carico settimanale, incremento WoW, intensità media, giorni recupero
+### 4b. Injury Risk Score Avanzato
+- Analisi predittiva del rischio infortunio con **7 fattori** ponderati
+- Fattori classici: carico settimanale, incremento WoW, intensità media, giorni recupero, aderenza piano
+- **Foster Monotony** (Foster 1998): media/stdev carichi 7 giorni, alert se >2.0
+- **ACSM 10% Rule**: incremento volume settimanale max 10%, alert se superato
+- Pesi: [0.25, 0.15, 0.15, 0.10, 0.10, 0.15, 0.10]
 - Gauge visuale con score 0-100 e codice colore (verde/giallo/arancione/rosso)
 - Grafico storico carico settimanale con evidenziazione spike
 - Raccomandazioni e alert personalizzati
 
-### 4c. Pace & Race Predictor (Calcolatore)
-- Previsioni gara dalla formula di Riegel
-- Calcolo VDOT e zone di allenamento da un risultato race
-- Input: distanza + tempo → output: previsioni per 5K/10K/15K/HM/M
+### 4c. Fitness & Freshness (Banister 1975)
+- **Modello Impulse-Response** di Banister per monitorare forma atletica
+- **TRIMP** (Lucia's method): `durata × HR_reserve × (0.64 × e^(1.92 × HR_reserve))`
+- **CTL** (Fitness): media mobile esponenziale 42 giorni del TRIMP
+- **ATL** (Fatigue): media mobile esponenziale 7 giorni del TRIMP
+- **TSB** (Form): CTL - ATL → indica la "freschezza" dell'atleta
+- Timeline con snapshot settimanali + stato corrente (Fresco/Neutro/Affaticato/Sovrallenamento)
+- Mini chart con CTL dots e TSB bars nella sezione Progressi
+
+### 4d. Previsioni Gara v2 (VDOT Daniels)
+- Previsioni basate esclusivamente sul **VDOT di Jack Daniels** (NO Riegel)
+- VDOT calcolato da corse complete con validazione rigorosa (pace 2:30-9:00/km)
+- Cap VDOT a 55 (runner amatoriale allenato)
+- Predizioni per: 5K, 10K, 21.1km (Mezza), 42.2km (Maratona)
+- Validazione range per ogni distanza (es. 5K: 15-35min, 10K: 32-75min)
+- Tabella storica mese per mese (Gen 2025 → oggi) con VDOT e trend
+- Filtri periodo (Oggi/1M/3M/6M) con tempo/passo reale del periodo passato
+
+### 4e. Calcolatore
+- Passi da VDOT: mostra VDOT corrente e i 5 passi di Daniels
+- Convertitore passo/velocità: min:sec/km ↔ km/h
 
 ### 5. Sistema Medaglie a 6 Livelli
 Per ogni distanza (5km, 10km, 15km, 21.1km):
@@ -454,17 +474,12 @@ Per ogni distanza (5km, 10km, 15km, 21.1km):
 - Fase "Ripresa" iniziale nel piano di allenamento
 - Monitoraggio progressi post-infortunio
 
-### 8. Previsioni Gara
-- Formula di Riegel per predizioni tempi
-- Predizioni per: 5km, 10km, 15km, 21.1km, 42.2km
-- Tracking progresso verso obiettivo 1:35:00
-
-### 9. Periodizzazione Visuale
+### 8. Periodizzazione Visuale
 - Grafico a barre completo del piano 38 settimane
 - Colori per fase con legenda
 - Statistiche aggregate per fase
 
-### 10. Doppia Vista Piano
+### 9. Doppia Vista Piano
 - **Vista Lista**: navigazione per settimana con dettaglio sessioni
 - **Vista Calendario**: panoramica mese con pallini colorati
 
@@ -512,7 +527,9 @@ Base URL: `https://corralejo-backend.onrender.com/api`
 | GET | `/weekly-history` | Storico KM settimanali (52 settimane) |
 | GET | `/vo2max-history` | Storico andamento VDOT nel tempo |
 | POST | `/vo2max-history/rebuild` | Ricostruisce storico VDOT da tutte le corse ≥3km |
-| GET | `/injury-risk` | Injury Risk Score: ACWR, carico, intensità, recupero, raccomandazioni |
+| GET | `/injury-risk` | Injury Risk Score avanzato: 7 fattori (carico, WoW, intensità, recupero, aderenza, Foster monotony, ACSM 10%) |
+| GET | `/fitness-freshness` | Fitness & Freshness: TRIMP giornaliero (Lucia), CTL/ATL/TSB (Banister 1975), timeline settimanale |
+| GET | `/prediction-history` | Previsioni gara v2: VDOT mensile da Gen 2025 a oggi, predizioni per distanza, trend |
 | GET | `/cadence-history` | Storico cadenza mensile (spm) per grafico trend |
 | GET | `/best-efforts` | Migliori prestazioni per distanza |
 | GET | `/runs/{run_id}/splits` | Splits per km di una corsa specifica |
@@ -811,8 +828,9 @@ npx expo run:android
 - [x] **Fix badge reset** — Badge ora filtrano best_efforts e vo2max_history dal 23 marzo 2026. VDOT per badge usa solo valori registrati dopo il 23/03. Nessun badge si sblocca prima della data di inizio
 - [x] **Previsioni mensili** — Tabella previsioni ora aggregata per mese (Apr 2025 → oggi) invece di per singola corsa. Trend mostra tempo/passo reale del periodo passato invece di secondi
 - [x] **Health check endpoint** — Aggiunto `GET /api/health` e `GET /` per Render health checks
-- [x] **CRPE - Composite Race Prediction Engine** — Previsioni gara completamente riscritte con motore composito: Riegel Best Effort con correzione HR (50%), VDOT Daniels (30%), Soglia Anaerobica (20%). Tabella mensile da Gen 2025 a oggi con miglior prestazione del mese, previsioni per 5K/10K/HM/Maratona, trend mese-su-mese. Filtri periodo (Tutti/1M/3M/6M)
-- [x] **Avatar Runner** — Schermata avatar con 4 viste (Aspetto, Statistiche, Equipaggiamento, Museo). Avatar SVG con equipaggiamento basato su VDOT (4 tier: Beginner/Intermediate/Advanced/Elite), postura basata su Injury Risk, aura animata basata su efficienza cardiaca. Museo con istantanee mensili. Endpoint `GET /api/avatar`. Accessibile da Profilo → Medaglie
+- [x] **Previsioni Gara v2 (VDOT puro)** — Previsioni basate esclusivamente su VDOT di Jack Daniels (rimosso Riegel/CRPE). VDOT cap 55, validazione range per distanza, tabella mensile Gen 2025 → oggi, filtri periodo con tempo/passo reale. Endpoint `GET /api/prediction-history`
+- [x] **Fitness & Freshness (Banister 1975)** — Modello Impulse-Response: TRIMP giornaliero (Lucia's method), CTL (42-day EMA), ATL (7-day EMA), TSB = CTL - ATL. 3 card stato + mini chart in Progressi. Endpoint `GET /api/fitness-freshness`
+- [x] **Injury Risk Avanzato (7 fattori)** — Aggiunto Foster Monotony (media/stdev 7gg, alert >2.0) e ACSM 10% Rule (incremento volume max 10%). Pesi ribilanciati su 7 fattori
 
 ---
 
