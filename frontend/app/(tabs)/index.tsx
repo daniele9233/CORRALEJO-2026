@@ -108,6 +108,13 @@ export default function Dashboard() {
           </View>
         </View>
 
+        {/* ====== MOTIVATIONAL QUOTE ====== */}
+        <View style={styles.quoteCard}>
+          <Text style={styles.quoteText}>
+            "Tutti vogliono andare in paradiso ma nessuno è disposto a morire per arrivarci"
+          </Text>
+        </View>
+
         {/* ====== HERO: TODAY'S WORKOUT ====== */}
         <View style={styles.todayHeaderRow}>
           <Ionicons name="today" size={16} color={COLORS.lime} />
@@ -519,6 +526,24 @@ function formatDateShort(dateStr: string) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+
+  /* motivational quote */
+  quoteCard: {
+    marginHorizontal: SPACING.xl,
+    marginBottom: SPACING.md,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.md,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.lime,
+  },
+  quoteText: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textSecondary,
+    fontStyle: 'italic',
+    lineHeight: 20,
+  },
 
   /* header */
   header: {
