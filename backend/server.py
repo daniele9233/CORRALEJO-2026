@@ -1222,12 +1222,105 @@ async def get_run(run_id: str):
     except Exception as e:
         logger.error(f"Race predictions in get_run error: {e}")
 
+    # ---- Supercompensation data for this run ----
+    supercomp_data = None
+    try:
+        run_type = (run.get("run_type") or run.get("type") or "").lower().replace(" ", "_")
+        ADAPT_MAP = {
+            "ripetute": ("metabolic", 10, "+5% Efficienza Mitocondriale", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
+            "ripetute_salita": ("neuromuscular", 7, "+8% Reattività Neuromuscolare", "Sprint, salite, velocità. Il sistema nervoso si adatta rapidamente."),
+            "fartlek": ("metabolic", 10, "+4% Soglia Anaerobica", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
+            "progressivo": ("metabolic", 12, "+4% Economia di Corsa", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
+            "tempo_run": ("metabolic", 10, "+5% Soglia Lattacida", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
+            "lungo": ("structural", 14, "+3% Densità Capillare", "Lunghi, base aerobica. Nuovi capillari e mitocondri vengono costruiti."),
+            "corsa_lenta": ("structural", 14, "+2% Base Aerobica", "Lunghi, base aerobica. Nuovi capillari e mitocondri vengono costruiti."),
+            "easy": ("structural", 14, "+2% Base Aerobica", "Lunghi, base aerobica. Nuovi capillari e mitocondri vengono costruiti."),
+            "corsa_media": ("metabolic", 10, "+3% Efficienza Aerobica", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
+            "recupero": ("structural", 7, "+1% Recupero Attivo", "Corsa rigenerativa. Favorisce il flusso sanguigno e lo smaltimento delle tossine."),
+            "gara": ("metabolic", 12, "+6% Adattamento Gara", "Lo sforzo massimale in gara stimola adattamenti profondi a livello metabolico."),
+            "interval": ("metabolic", 10, "+5% Efficienza Mitocondriale", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
+            "sprint": ("neuromuscular", 5, "+8% Reattività Neuromuscolare", "Sprint, salite, velocità. Il sistema nervoso si adatta rapidamente."),
+        }
+        DEFAULT_A = ("metabolic", 10, "+3% Adattamento Generale", "L'allenamento stimola un adattamento generale del sistema aerobico.")
+
+        cat, days_to_peak, benefit, explanation = ADAPT_MAP.get(run_type, DEFAULT_A)
+
+        # Also check by pace — if very fast relative to threshold, likely neuromuscular
+        avg_pace_str = run.get("avg_pace", "")
+        dist_km = run.get("distance_km", 0) or 0
+        if avg_pace_str and dist_km > 0:
+            try:
+                pp = avg_pace_str.split(":")
+                pace_secs = int(pp[0]) * 60 + int(pp[1])
+                # Short + fast = neuromuscular, long + slow = structural
+                if dist_km <= 5 and pace_secs < 270:  # under 4:30/km and short
+                    cat, days_to_peak, benefit, explanation = "neuromuscular", 5, "+8% Reattività Neuromuscolare", "Sprint, salite, velocità. Il sistema nervoso si adatta rapidamente."
+                elif dist_km >= 15:  # long runs
+                    cat, days_to_peak, benefit, explanation = "structural", 14, "+3% Densità Capillare", "Lunghi, base aerobica. Nuovi capillari e mitocondri vengono costruiti."
+            except (ValueError, IndexError):
+                pass
+
+        # Calculate dates
+        run_date_str = run.get("date", "")
+        benefit_date = None
+        days_elapsed = None
+        pct_matured = 0
+        status = "processing"
+        if run_date_str:
+            try:
+                rd = dt_date.fromisoformat(run_date_str)
+                benefit_date = (rd + timedelta(days=days_to_peak)).isoformat()
+                days_elapsed = (dt_date.today() - rd).days
+                pct_matured = min(100, round((days_elapsed / days_to_peak) * 100))
+                if pct_matured >= 100:
+                    status = "active"
+                elif pct_matured >= 60:
+                    status = "consolidating"
+                else:
+                    status = "processing"
+            except (ValueError, TypeError):
+                pass
+
+        CAT_LABELS = {
+            "neuromuscular": {"label": "Neuromuscolare", "icon": "⚡", "color": "#f59e0b", "days_range": "3-7 giorni"},
+            "metabolic": {"label": "Metabolico", "icon": "🔥", "color": "#f97316", "days_range": "7-14 giorni"},
+            "structural": {"label": "Strutturale", "icon": "🧬", "color": "#ef4444", "days_range": "14-21 giorni"},
+        }
+        cat_info = CAT_LABELS.get(cat, CAT_LABELS["metabolic"])
+
+        STATUS_LABELS = {
+            "processing": {"label": "In lavorazione", "emoji": "🟦"},
+            "consolidating": {"label": "Consolidamento", "emoji": "🟩"},
+            "active": {"label": "Attivo!", "emoji": "💎"},
+        }
+        status_info = STATUS_LABELS.get(status, STATUS_LABELS["processing"])
+
+        supercomp_data = {
+            "category": cat,
+            "category_label": cat_info["label"],
+            "category_icon": cat_info["icon"],
+            "category_color": cat_info["color"],
+            "days_range": cat_info["days_range"],
+            "days_to_peak": days_to_peak,
+            "benefit": benefit,
+            "explanation": explanation,
+            "benefit_date": benefit_date,
+            "days_elapsed": days_elapsed,
+            "pct_matured": pct_matured,
+            "status": status,
+            "status_label": status_info["label"],
+            "status_emoji": status_info["emoji"],
+        }
+    except Exception as e:
+        logger.warning(f"Supercomp data for run error: {e}")
+
     return {
         "run": run,
         "analysis": analysis,
         "planned_session": planned_session,
         "race_predictions": race_predictions,
         "prediction_trends": prediction_trends,
+        "supercompensation": supercomp_data,
     }
 
 @api_router.post("/runs")

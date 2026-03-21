@@ -18,6 +18,7 @@ export default function RunDetailScreen() {
   const [run, setRun] = useState<Run | null>(null);
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null);
   const [planned, setPlanned] = useState<any>(null);
+  const [supercomp, setSupercomp] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
 
@@ -31,6 +32,7 @@ export default function RunDetailScreen() {
       setRun(data.run);
       setAnalysis(data.analysis);
       setPlanned(data.planned_session ?? null);
+      setSupercomp(data.supercompensation ?? null);
     } catch (e) {
       console.error(e);
     } finally {
@@ -693,6 +695,144 @@ export default function RunDetailScreen() {
         )}
 
         {/* Race Predictions section removed */}
+
+        {/* ====== SUPERCOMPENSAZIONE ====== */}
+        {supercomp && (
+          <View style={{
+            marginHorizontal: SPACING.lg, marginBottom: SPACING.lg,
+            backgroundColor: COLORS.card, borderRadius: BORDER_RADIUS.lg,
+            padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.cardBorder,
+          }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md }}>
+              <Ionicons name="flask" size={18} color={COLORS.lime} />
+              <Text style={{ fontSize: FONT_SIZES.md, fontWeight: '800', color: COLORS.text, letterSpacing: 0.5 }}>
+                SUPERCOMPENSAZIONE
+              </Text>
+            </View>
+
+            {/* Category card */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
+              backgroundColor: (supercomp.category_color || '#f97316') + '08',
+              borderRadius: BORDER_RADIUS.md, padding: SPACING.md,
+              borderLeftWidth: 4, borderLeftColor: supercomp.category_color || '#f97316',
+              marginBottom: SPACING.md,
+            }}>
+              <View style={{
+                width: 44, height: 44, borderRadius: 22,
+                backgroundColor: (supercomp.category_color || '#f97316') + '20',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Text style={{ fontSize: 22 }}>{supercomp.category_icon || '🔥'}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.xs }}>
+                  <Text style={{
+                    fontSize: 15, fontWeight: '900',
+                    color: supercomp.category_color || '#f97316',
+                  }}>
+                    {supercomp.category_label || 'Metabolico'}
+                  </Text>
+                  <View style={{
+                    backgroundColor: (supercomp.category_color || '#f97316') + '20',
+                    paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4,
+                  }}>
+                    <Text style={{
+                      fontSize: 9, color: supercomp.category_color || '#f97316', fontWeight: '700',
+                    }}>
+                      {supercomp.days_range || '7-14 giorni'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 11, color: COLORS.textSecondary, marginTop: 3, lineHeight: 16 }}>
+                  {supercomp.explanation || ''}
+                </Text>
+              </View>
+            </View>
+
+            {/* Maturation progress */}
+            <View style={{
+              backgroundColor: COLORS.bg, borderRadius: BORDER_RADIUS.md, padding: SPACING.md,
+            }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm }}>
+                <Text style={{ fontSize: 11, color: COLORS.text, fontWeight: '700' }}>
+                  {supercomp.status_emoji || '🟦'} {supercomp.status_label || 'In lavorazione'}
+                </Text>
+                <Text style={{
+                  fontSize: 16, fontWeight: '900',
+                  color: supercomp.status === 'active' ? '#22c55e' : supercomp.status === 'consolidating' ? '#22c55e' : '#3b82f6',
+                }}>
+                  {supercomp.pct_matured ?? 0}%
+                </Text>
+              </View>
+
+              {/* Progress bar */}
+              <View style={{
+                height: 8, backgroundColor: COLORS.cardBorder + '40', borderRadius: 4, overflow: 'hidden',
+              }}>
+                <View style={{
+                  height: 8, borderRadius: 4,
+                  width: `${Math.min(supercomp.pct_matured ?? 0, 100)}%`,
+                  backgroundColor: supercomp.status === 'active' ? '#22c55e' : supercomp.status === 'consolidating' ? '#22c55e' : '#3b82f6',
+                }} />
+              </View>
+
+              {/* Benefit info */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: SPACING.sm }}>
+                <Text style={{ fontSize: 10, color: COLORS.textMuted }}>
+                  {supercomp.benefit || ''}
+                </Text>
+                <Text style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: '600' }}>
+                  {supercomp.status === 'active'
+                    ? '✓ Beneficio attivo ora!'
+                    : supercomp.benefit_date
+                    ? `Picco: ${(() => {
+                        const d = new Date(supercomp.benefit_date + 'T00:00:00');
+                        const MNAMES = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+                        return `${d.getDate()} ${MNAMES[d.getMonth()]}`;
+                      })()}`
+                    : ''
+                  }
+                </Text>
+              </View>
+            </View>
+
+            {/* Message when active */}
+            {supercomp.status === 'active' && (
+              <View style={{
+                marginTop: SPACING.sm, backgroundColor: '#22c55e10',
+                borderRadius: BORDER_RADIUS.sm, padding: SPACING.sm,
+                borderWidth: 1, borderColor: '#22c55e20',
+              }}>
+                <Text style={{ fontSize: 10, color: '#22c55e', textAlign: 'center', fontWeight: '600' }}>
+                  💎 Questo allenamento ha completato la maturazione. Il beneficio è ora nel tuo corpo!
+                </Text>
+              </View>
+            )}
+
+            {/* Message when processing */}
+            {supercomp.status === 'processing' && supercomp.benefit_date && (
+              <View style={{
+                marginTop: SPACING.sm, backgroundColor: '#3b82f608',
+                borderRadius: BORDER_RADIUS.sm, padding: SPACING.sm,
+                borderWidth: 1, borderColor: '#3b82f620',
+              }}>
+                <Text style={{ fontSize: 10, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 16 }}>
+                  🧬 Il tuo corpo sta elaborando questo stimolo. Vedrai il massimo beneficio il{' '}
+                  <Text style={{ color: '#3b82f6', fontWeight: '700' }}>
+                    {(() => {
+                      const d = new Date(supercomp.benefit_date + 'T00:00:00');
+                      const MNAMES = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+                      const DAYS = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'];
+                      return `${DAYS[d.getDay()]} ${d.getDate()} ${MNAMES[d.getMonth()]}`;
+                    })()}
+                  </Text>.
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* AI Analysis */}
         <View style={styles.aiSection}>
