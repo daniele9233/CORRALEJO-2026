@@ -846,7 +846,7 @@ export default function RunDetailScreen() {
               <Text style={styles.aiText}>{analysis.analysis}</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SPACING.sm }}>
                 <Text style={styles.aiDate}>
-                  {formatDateTime(analysis.created_at)}{analysis.ai_source === 'gemini' ? ' • Gemini AI' : analysis.ai_source === 'fallback' ? ' • Analisi algoritmica' : ''}
+                  {formatDateTime(analysis.created_at)}{analysis.ai_source === 'claude' ? ' • Claude AI' : analysis.ai_source === 'gemini' ? ' • Gemini AI' : analysis.ai_source === 'fallback' ? ' • Analisi algoritmica' : ''}
                 </Text>
                 <TouchableOpacity
                   onPress={requestAnalysis}
