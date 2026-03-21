@@ -20,8 +20,6 @@ export default function RunDetailScreen() {
   const [planned, setPlanned] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
-  const [racePredictions, setRacePredictions] = useState<any>(null);
-  const [predictionTrends, setPredictionTrends] = useState<any>(null);
 
   useEffect(() => {
     loadRun();
@@ -33,8 +31,6 @@ export default function RunDetailScreen() {
       setRun(data.run);
       setAnalysis(data.analysis);
       setPlanned(data.planned_session ?? null);
-      setRacePredictions(data.race_predictions ?? null);
-      setPredictionTrends(data.prediction_trends ?? null);
     } catch (e) {
       console.error(e);
     } finally {

@@ -60,7 +60,6 @@ export const api = {
   sendWeeklyReport: () => apiFetch('/weekly-report/send', { method: 'POST' }),
   getCadenceHistory: () => apiFetch('/cadence-history'),
   getDecouplingHistory: () => apiFetch('/decoupling-history'),
-  getPredictionHistory: () => apiFetch('/prediction-history'),
   getFitnessFreshness: () => apiFetch('/fitness-freshness'),
   getBestEfforts: () => apiFetch('/best-efforts'),
   getBadges: () => apiFetch('/badges'),

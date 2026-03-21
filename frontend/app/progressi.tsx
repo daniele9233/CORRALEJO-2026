@@ -21,11 +21,6 @@ interface ThresholdPoint {
   runs_count: number;
 }
 
-interface RacePrediction {
-  predicted_time_str: string;
-  predicted_pace: string;
-  based_on: string;
-}
 
 // ---- Pace Line Chart Component ----
 const LINE_CHART_HEIGHT = 180;
@@ -535,12 +530,9 @@ export default function ProgressiScreen() {
   const [analytics, setAnalytics] = useState<any>(null);
   const [cadenceHistory, setCadenceHistory] = useState<any[]>([]);
   const [decouplingHistory, setDecouplingHistory] = useState<any[]>([]);
-  const [predictionData, setPredictionData] = useState<any>(null);
   const [fitnessData, setFitnessData] = useState<any>(null);
   const [selectedPeriod, setSelectedPeriod] = useState<string>('tutti');
-  const [selectedDistance, setSelectedDistance] = useState<string>('5km');
   const [tooltip, setTooltip] = useState<{ x: number; y: number; value: string; label: string } | null>(null);
-  const [predTooltip, setPredTooltip] = useState<{ idx: number; time: string; pace: string; date: string; vdot: number } | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -552,17 +544,15 @@ export default function ProgressiScreen() {
     try {
       setLoading(true);
       setError(false);
-      const [data, cadenceData, decouplingData, predData, fitData] = await Promise.all([
+      const [data, cadenceData, decouplingData, fitData] = await Promise.all([
         api.getAnalytics(),
         api.getCadenceHistory().catch(() => ({ cadence_history: [] })),
         api.getDecouplingHistory().catch(() => ({ decoupling_history: [] })),
-        api.getPredictionHistory().catch(() => ({ prediction_history: [], current: {}, trends: {} })),
         api.getFitnessFreshness().catch(() => ({ fitness_freshness: [], current: {} })),
       ]);
       setAnalytics(data);
       setCadenceHistory(cadenceData.cadence_history || []);
       setDecouplingHistory(decouplingData.decoupling_history || []);
-      setPredictionData(predData);
       setFitnessData(fitData);
     } catch (e) {
       console.error(e);
@@ -596,7 +586,7 @@ export default function ProgressiScreen() {
     );
   }
 
-  const { vo2max, vo2max_target, vo2max_history, anaerobic_threshold, race_predictions, best_efforts, goal_progress_pct, target_hm_time_str, current_hm_pred_str } = analytics;
+  const { vo2max, vo2max_target, vo2max_history, anaerobic_threshold, best_efforts, goal_progress_pct, target_hm_time_str, current_hm_pred_str } = analytics;
   const history: ThresholdPoint[] = anaerobic_threshold?.history || [];
   const currentAT = anaerobic_threshold?.current || {};
   const preInjuryAT = anaerobic_threshold?.pre_injury || {};
@@ -1087,165 +1077,6 @@ export default function ProgressiScreen() {
             </View>
           );
         })()}
-
-        {/* Race Predictions v2 — Monthly table based on VDOT */}
-        {predictionData && predictionData.prediction_history && predictionData.prediction_history.length > 0 && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <Ionicons name="trophy" size={20} color="#f97316" />
-              <Text style={styles.sectionTitle}>PREVISIONI GARA</Text>
-            </View>
-            <Text style={styles.predBasedOn}>
-              Basate su VDOT (Daniels) — evoluzione mese per mese
-            </Text>
-
-            {/* Current predictions cards */}
-            {predictionData.current && Object.keys(predictionData.current).length > 0 && (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.lg }}>
-                {[
-                  { key: '5km', label: '5 KM' },
-                  { key: '10km', label: '10 KM' },
-                  { key: '21.1km', label: 'Mezza' },
-                  { key: '42.2km', label: 'Maratona' },
-                ].map(d => {
-                  const pred = predictionData.current?.[d.key];
-                  if (!pred) return null;
-                  const isGoal = d.key === '21.1km';
-                  return (
-                    <View key={d.key} style={{
-                      width: '48%', alignItems: 'center', paddingVertical: SPACING.md,
-                      backgroundColor: isGoal ? COLORS.lime + '10' : COLORS.bg,
-                      borderRadius: BORDER_RADIUS.md,
-                      borderWidth: 1, borderColor: isGoal ? COLORS.lime + '40' : COLORS.cardBorder,
-                    }}>
-                      <Text style={{ fontSize: 10, color: isGoal ? COLORS.lime : COLORS.textMuted, fontWeight: '700', marginBottom: 2 }}>{d.label}</Text>
-                      <Text style={{ fontSize: 18, color: isGoal ? COLORS.lime : COLORS.text, fontWeight: '900' }}>{pred.time_str}</Text>
-                      <Text style={{ fontSize: 10, color: COLORS.textMuted }}>{pred.pace}/km</Text>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
-
-            {/* VDOT badge */}
-            {predictionData.current_vdot && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: SPACING.md, gap: 6 }}>
-                <Text style={{ fontSize: 11, color: COLORS.textMuted }}>VDOT attuale:</Text>
-                <View style={{ backgroundColor: COLORS.blue + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
-                  <Text style={{ fontSize: 13, color: COLORS.blue, fontWeight: '900' }}>{predictionData.current_vdot}</Text>
-                </View>
-              </View>
-            )}
-
-            {/* Distance selector for table */}
-            <View style={{ flexDirection: 'row', marginBottom: SPACING.sm, gap: 4 }}>
-              {[
-                { key: '5km', label: '5K' },
-                { key: '10km', label: '10K' },
-                { key: '21.1km', label: 'Mezza' },
-                { key: '42.2km', label: 'Maratona' },
-              ].map(tab => (
-                <TouchableOpacity
-                  key={tab.key}
-                  onPress={() => setSelectedDistance(tab.key)}
-                  style={{
-                    flex: 1, paddingVertical: 6, borderRadius: BORDER_RADIUS.sm,
-                    backgroundColor: selectedDistance === tab.key ? '#f97316' : COLORS.bg,
-                    borderWidth: 1, borderColor: selectedDistance === tab.key ? '#f97316' : COLORS.cardBorder,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text style={{
-                    fontSize: 9, fontWeight: '800',
-                    color: selectedDistance === tab.key ? '#fff' : COLORS.textMuted,
-                  }}>{tab.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Monthly history table */}
-            <View style={{ borderTopWidth: 1, borderTopColor: COLORS.cardBorder }}>
-              {/* Table header */}
-              <View style={{ flexDirection: 'row', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.cardBorder }}>
-                <Text style={{ flex: 2, fontSize: 9, color: COLORS.textMuted, fontWeight: '700' }}>MESE</Text>
-                <Text style={{ flex: 3, fontSize: 9, color: COLORS.textMuted, fontWeight: '700' }}>MIGLIOR CORSA</Text>
-                <Text style={{ flex: 1.5, fontSize: 9, color: COLORS.textMuted, fontWeight: '700', textAlign: 'center' }}>PREVISTO</Text>
-                <Text style={{ flex: 1, fontSize: 9, color: COLORS.textMuted, fontWeight: '700', textAlign: 'right' }}>VDOT</Text>
-              </View>
-
-              {/* Rows */}
-              {predictionData.prediction_history.map((entry: any, i: number) => {
-                const pred = entry.predictions?.[selectedDistance];
-                const isLast = i === predictionData.prediction_history.length - 1;
-                const hasData = !!pred;
-                const monthShort = entry.month_label?.split(' ')[0]?.slice(0, 3) + ' ' + entry.month?.slice(2, 4) || entry.month;
-
-                return (
-                  <View key={entry.month} style={{
-                    flexDirection: 'row', paddingVertical: 8, alignItems: 'center',
-                    borderBottomWidth: 1, borderBottomColor: COLORS.cardBorder + '30',
-                    backgroundColor: isLast && hasData ? '#f9731608' : 'transparent',
-                  }}>
-                    <Text style={{
-                      flex: 2, fontSize: 10, fontWeight: isLast ? '700' : '500',
-                      color: isLast ? '#f97316' : COLORS.textSecondary,
-                    }}>{monthShort}</Text>
-                    <Text style={{
-                      flex: 3, fontSize: 9,
-                      color: hasData ? COLORS.textMuted : COLORS.textMuted + '50',
-                      fontStyle: hasData ? 'normal' : 'italic',
-                    }} numberOfLines={1}>
-                      {entry.best_effort_distance
-                        ? `${entry.best_effort_distance}km ${entry.best_effort_pace}/km${entry.best_effort_hr ? ` FC${entry.best_effort_hr}` : ''}`
-                        : '—'}
-                    </Text>
-                    <Text style={{
-                      flex: 1.5, fontSize: 12, textAlign: 'center', fontWeight: '800',
-                      color: hasData ? (isLast ? COLORS.text : COLORS.textSecondary) : COLORS.textMuted + '30',
-                    }}>
-                      {hasData ? pred.time_str : '—'}
-                    </Text>
-                    <Text style={{
-                      flex: 1, fontSize: 10, textAlign: 'right', fontWeight: '700',
-                      color: entry.vdot ? COLORS.blue : COLORS.textMuted + '30',
-                    }}>
-                      {entry.vdot || '—'}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-
-            {/* Period comparison */}
-            {predictionData.trends && Object.keys(predictionData.trends).length > 0 && (
-              <View style={{ marginTop: SPACING.md }}>
-                <Text style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: '700', marginBottom: SPACING.xs }}>CONFRONTO</Text>
-                <View style={{ flexDirection: 'row', gap: SPACING.xs }}>
-                  {[
-                    { key: '1m', label: '1 mese fa' },
-                    { key: '3m', label: '3 mesi fa' },
-                    { key: '6m', label: '6 mesi fa' },
-                  ].map(p => {
-                    const trend = predictionData.trends?.[p.key]?.[selectedDistance];
-                    if (!trend) return null;
-                    return (
-                      <View key={p.key} style={{
-                        flex: 1, backgroundColor: trend.improved ? '#22c55e10' : '#ef444410',
-                        borderRadius: BORDER_RADIUS.sm, padding: SPACING.xs, alignItems: 'center',
-                      }}>
-                        <Text style={{ fontSize: 8, color: COLORS.textMuted, marginBottom: 2 }}>{p.label}</Text>
-                        <Text style={{ fontSize: 11, fontWeight: '800', color: trend.improved ? '#22c55e' : '#ef4444' }}>
-                          {trend.past_time_str}
-                        </Text>
-                        <Text style={{ fontSize: 8, color: COLORS.textMuted }}>{trend.past_pace}/km</Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
-            )}
-          </View>
-        )}
 
         {/* Best Efforts - Medals */}
         {best_efforts && Object.keys(best_efforts).length > 0 && (
