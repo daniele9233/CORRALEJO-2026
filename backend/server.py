@@ -4543,7 +4543,7 @@ BADGE_DEFINITIONS = [
     {"id": "century_km_month", "name": "Mese da 100 km", "cat": "fun", "cat_label": "🎉 Fun & Speciali", "desc": "Corri 100+ km in un mese", "icon": "💯", "target": 1},
     {"id": "hour_run", "name": "Corsa da 1 ora", "cat": "fun", "cat_label": "🎉 Fun & Speciali", "desc": "Completa una corsa di almeno 60 minuti", "icon": "⏰", "target": 1},
     {"id": "two_hour_run", "name": "Corsa da 2 ore", "cat": "fun", "cat_label": "🎉 Fun & Speciali", "desc": "Completa una corsa di almeno 120 minuti", "icon": "⏰", "target": 1},
-    {"id": "passerotto", "name": "Passerotto", "cat": "fun", "cat_label": "🎉 Fun & Speciali", "desc": "5K sotto i 20 minuti E 10K sotto i 4:15/km", "icon": "🐦", "target": 1},
+    {"id": "passerotto", "name": "Passerotto", "cat": "fun", "cat_label": "🎉 Fun & Speciali", "desc": "5K sotto i 20 minuti E 10K sotto i 4:15/km", "icon": "🐦", "target": 2},
 ]
 
 
