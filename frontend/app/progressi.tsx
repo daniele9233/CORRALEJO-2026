@@ -975,16 +975,10 @@ export default function ProgressiScreen() {
           );
         })()}
 
-        {/* Fitness & Freshness — Banister Model */}
+        {/* Fitness & Freshness — Strava-style */}
         {fitnessData && fitnessData.fitness_freshness && fitnessData.fitness_freshness.length > 0 && (() => {
           const ff = fitnessData.fitness_freshness;
           const curr = fitnessData.current || {};
-
-          // Chart: show CTL (fitness) and TSB (form) as bars
-          const last20 = ff.slice(-20);
-          const maxCTL = Math.max(...last20.map((p: any) => Math.abs(p.ctl)), 1);
-          const maxTSB = Math.max(...last20.map((p: any) => Math.abs(p.tsb)), 1);
-          const chartMax = Math.max(maxCTL, maxTSB, 1);
 
           const formColors: Record<string, string> = {
             green: '#22c55e',
@@ -994,84 +988,235 @@ export default function ProgressiScreen() {
           };
           const formColor = formColors[curr.form_color] || COLORS.textMuted;
 
+          // Chart dimensions
+          const FF_CHART_H = 200;
+          const FF_CHART_PAD_L = 30;
+          const FF_CHART_PAD_R = 10;
+          const ffChartW = SCREEN_WIDTH - 64 - FF_CHART_PAD_L - FF_CHART_PAD_R;
+
+          // Determine scale from all data
+          const allVals = ff.flatMap((p: any) => [p.ctl, p.atl]);
+          const maxY = Math.max(...allVals, 10) * 1.15;
+          const stepX = ffChartW / Math.max(ff.length - 1, 1);
+
+          const toChartY = (val: number) => FF_CHART_H - (Math.max(val, 0) / maxY) * FF_CHART_H;
+
+          // Month labels for x-axis
+          const MONTH_NAMES_SHORT = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+          const monthLabels: { idx: number; label: string }[] = [];
+          let lastMonth = '';
+          ff.forEach((p: any, i: number) => {
+            const m = p.date?.slice(0, 7);
+            if (m && m !== lastMonth) {
+              lastMonth = m;
+              const parts = m.split('-');
+              const yr = parts[0].slice(2);
+              const mo = parseInt(parts[1]) - 1;
+              monthLabels.push({ idx: i, label: `${MONTH_NAMES_SHORT[mo]}` + (mo === 0 ? `\n${parts[0]}` : '') });
+            }
+          });
+
+          // Y-axis gridlines
+          const yStep = Math.ceil(maxY / 5 / 10) * 10;
+          const yGridLines: number[] = [];
+          for (let v = 0; v <= maxY; v += yStep) yGridLines.push(v);
+
           return (
             <View style={styles.sectionCard}>
               <View style={styles.sectionHeader}>
-                <Ionicons name="fitness" size={20} color="#3b82f6" />
+                <Ionicons name="fitness" size={20} color="#f97316" />
                 <Text style={styles.sectionTitle}>FITNESS & FRESHNESS</Text>
               </View>
-              <Text style={styles.predBasedOn}>
-                Banister (1991) — CTL/ATL/TSB
-              </Text>
 
-              {/* Current status cards */}
-              <View style={{ flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.lg }}>
-                {/* Fitness (CTL) */}
-                <View style={{ flex: 1, backgroundColor: '#f9731610', borderRadius: BORDER_RADIUS.md, padding: SPACING.sm, alignItems: 'center' }}>
-                  <Text style={{ fontSize: 8, color: '#f97316', fontWeight: '700' }}>CONDIZIONE</Text>
-                  <Text style={{ fontSize: 24, color: '#f97316', fontWeight: '900' }}>{curr.ctl}</Text>
+              {/* 3 big status cards — Strava style */}
+              <View style={{ flexDirection: 'row', marginBottom: SPACING.lg, gap: SPACING.md }}>
+                {/* Condizione Fisica */}
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 36, color: '#f97316', fontWeight: '900', lineHeight: 40 }}>{curr.ctl}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                    <Ionicons name={curr.ctl_trend >= 0 ? "caret-up" : "caret-down"} size={10} color={curr.ctl_trend >= 0 ? '#22c55e' : '#ef4444'} />
-                    <Text style={{ fontSize: 9, color: curr.ctl_trend >= 0 ? '#22c55e' : '#ef4444', fontWeight: '700' }}>{Math.abs(curr.ctl_trend)}</Text>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f97316' }} />
+                    <Text style={{ fontSize: 9, color: '#f97316', fontWeight: '700' }}>CONDIZIONE</Text>
+                  </View>
+                  <Text style={{ fontSize: 9, color: '#f97316', fontWeight: '700' }}>FISICA</Text>
+                  {curr.ctl_trend !== undefined && curr.ctl_trend !== 0 && (
+                    <Text style={{ fontSize: 10, color: curr.ctl_trend > 0 ? '#22c55e' : '#ef4444', fontWeight: '800', marginTop: 2 }}>
+                      {curr.ctl_trend > 0 ? '+' : ''}{curr.ctl_trend}
+                    </Text>
+                  )}
+                </View>
+
+                {/* Affaticamento */}
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 36, color: '#9ca3af', fontWeight: '900', lineHeight: 40 }}>{curr.atl}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#9ca3af' }} />
+                    <Text style={{ fontSize: 9, color: '#9ca3af', fontWeight: '700' }}>AFFATICAMENTO</Text>
                   </View>
                 </View>
 
-                {/* Fatigue (ATL) */}
-                <View style={{ flex: 1, backgroundColor: COLORS.bg, borderRadius: BORDER_RADIUS.md, padding: SPACING.sm, alignItems: 'center' }}>
-                  <Text style={{ fontSize: 8, color: COLORS.textMuted, fontWeight: '700' }}>AFFATICAMENTO</Text>
-                  <Text style={{ fontSize: 24, color: COLORS.textSecondary, fontWeight: '900' }}>{curr.atl}</Text>
-                  <Text style={{ fontSize: 8, color: COLORS.textMuted }}>ATL</Text>
-                </View>
-
-                {/* Form (TSB) */}
-                <View style={{ flex: 1, backgroundColor: formColor + '15', borderRadius: BORDER_RADIUS.md, padding: SPACING.sm, alignItems: 'center' }}>
-                  <Text style={{ fontSize: 8, color: formColor, fontWeight: '700' }}>FORMA</Text>
-                  <Text style={{ fontSize: 24, color: formColor, fontWeight: '900' }}>{curr.tsb}</Text>
-                  <Text style={{ fontSize: 8, color: formColor, fontWeight: '700' }}>{curr.form_status}</Text>
+                {/* Forma Fisica */}
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 36, color: formColor, fontWeight: '900', lineHeight: 40 }}>{curr.tsb}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: formColor }} />
+                    <Text style={{ fontSize: 9, color: formColor, fontWeight: '700' }}>FORMA</Text>
+                  </View>
+                  <Text style={{ fontSize: 9, color: formColor, fontWeight: '700' }}>FISICA</Text>
+                  <View style={{ backgroundColor: formColor + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 3 }}>
+                    <Text style={{ fontSize: 8, color: formColor, fontWeight: '800' }}>{curr.form_status?.toUpperCase()}</Text>
+                  </View>
                 </View>
               </View>
 
-              {/* Mini chart — CTL line + TSB bars */}
-              <View style={{ height: 100, flexDirection: 'row', alignItems: 'flex-end', gap: 2, marginBottom: SPACING.xs }}>
-                {last20.map((point: any, i: number) => {
-                  const ctlH = Math.max(2, (point.ctl / chartMax) * 80);
-                  const tsbH = Math.max(2, Math.abs(point.tsb) / chartMax * 80);
-                  const tsbPositive = point.tsb >= 0;
+              {/* Interactive Strava-style chart */}
+              <View
+                style={{ height: FF_CHART_H + 30, marginBottom: SPACING.sm }}
+                onStartShouldSetResponder={() => true}
+                onMoveShouldSetResponder={() => true}
+              >
+                {/* Y-axis labels + gridlines */}
+                {yGridLines.map((val, i) => (
+                  <React.Fragment key={`yg-${i}`}>
+                    <View style={{
+                      position: 'absolute', left: FF_CHART_PAD_L, right: FF_CHART_PAD_R,
+                      top: toChartY(val), height: 1,
+                      backgroundColor: COLORS.cardBorder, opacity: 0.4,
+                    }} />
+                    <Text style={{
+                      position: 'absolute', left: 0, top: toChartY(val) - 6,
+                      fontSize: 8, color: COLORS.textMuted, width: FF_CHART_PAD_L - 4, textAlign: 'right',
+                    }}>{val}</Text>
+                  </React.Fragment>
+                ))}
+
+                {/* ATL area (grey filled) */}
+                {ff.length > 1 && ff.map((point: any, i: number) => {
+                  if (i === 0) return null;
+                  const prev = ff[i - 1];
+                  const x1 = FF_CHART_PAD_L + (i - 1) * stepX;
+                  const x2 = FF_CHART_PAD_L + i * stepX;
+                  const y1 = toChartY(prev.atl);
+                  const y2 = toChartY(point.atl);
+                  const avgY = (y1 + y2) / 2;
+                  const barH = FF_CHART_H - avgY;
                   return (
-                    <View key={i} style={{ flex: 1, alignItems: 'center', height: 100, justifyContent: 'flex-end' }}>
-                      {/* CTL dot */}
-                      <View style={{
-                        width: 4, height: 4, borderRadius: 2,
-                        backgroundColor: '#f97316',
-                        position: 'absolute', bottom: ctlH, zIndex: 2,
-                      }} />
-                      {/* TSB bar */}
-                      <View style={{
-                        width: '80%', height: tsbH,
-                        backgroundColor: tsbPositive ? '#22c55e40' : '#ef444440',
-                        borderRadius: 2,
-                      }} />
-                    </View>
+                    <View key={`atl-fill-${i}`} style={{
+                      position: 'absolute', left: x1, top: avgY,
+                      width: x2 - x1 + 1, height: Math.max(barH, 0),
+                      backgroundColor: '#9ca3af15',
+                    }} />
                   );
                 })}
+
+                {/* ATL line (grey) */}
+                {ff.map((point: any, i: number) => {
+                  if (i === 0) return null;
+                  const prev = ff[i - 1];
+                  const x1 = FF_CHART_PAD_L + (i - 1) * stepX;
+                  const x2 = FF_CHART_PAD_L + i * stepX;
+                  const y1 = toChartY(prev.atl);
+                  const y2 = toChartY(point.atl);
+                  const dx = x2 - x1, dy = y2 - y1;
+                  const length = Math.sqrt(dx * dx + dy * dy);
+                  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                  return (
+                    <View key={`atl-${i}`} style={{
+                      position: 'absolute', left: x1, top: y1,
+                      width: length, height: 1.5,
+                      backgroundColor: '#9ca3af',
+                      transform: [{ rotate: `${angle}deg` }], transformOrigin: 'left center',
+                      opacity: 0.7,
+                    }} />
+                  );
+                })}
+
+                {/* CTL line (orange, thicker) */}
+                {ff.map((point: any, i: number) => {
+                  if (i === 0) return null;
+                  const prev = ff[i - 1];
+                  const x1 = FF_CHART_PAD_L + (i - 1) * stepX;
+                  const x2 = FF_CHART_PAD_L + i * stepX;
+                  const y1 = toChartY(prev.ctl);
+                  const y2 = toChartY(point.ctl);
+                  const dx = x2 - x1, dy = y2 - y1;
+                  const length = Math.sqrt(dx * dx + dy * dy);
+                  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                  return (
+                    <View key={`ctl-${i}`} style={{
+                      position: 'absolute', left: x1, top: y1,
+                      width: length, height: 2.5,
+                      backgroundColor: '#f97316',
+                      transform: [{ rotate: `${angle}deg` }], transformOrigin: 'left center',
+                    }} />
+                  );
+                })}
+
+                {/* Last point dots */}
+                {ff.length > 0 && (() => {
+                  const last = ff[ff.length - 1];
+                  const x = FF_CHART_PAD_L + (ff.length - 1) * stepX;
+                  return (
+                    <>
+                      <View style={{
+                        position: 'absolute', left: x - 4, top: toChartY(last.ctl) - 4,
+                        width: 8, height: 8, borderRadius: 4, backgroundColor: '#f97316',
+                        borderWidth: 2, borderColor: '#fff', zIndex: 3,
+                      }} />
+                      <Text style={{
+                        position: 'absolute', left: x - 10, top: toChartY(last.ctl) - 18,
+                        fontSize: 9, color: '#f97316', fontWeight: '800', width: 24, textAlign: 'center',
+                      }}>{last.ctl}</Text>
+                      <View style={{
+                        position: 'absolute', left: x - 3, top: toChartY(last.atl) - 3,
+                        width: 6, height: 6, borderRadius: 3, backgroundColor: '#9ca3af',
+                        zIndex: 3,
+                      }} />
+                      <Text style={{
+                        position: 'absolute', left: x + 6, top: toChartY(last.atl) - 7,
+                        fontSize: 9, color: '#9ca3af', fontWeight: '800',
+                      }}>{last.atl}</Text>
+                    </>
+                  );
+                })()}
+
+                {/* X-axis month labels */}
+                <View style={{ position: 'absolute', top: FF_CHART_H + 4, left: FF_CHART_PAD_L, right: FF_CHART_PAD_R }}>
+                  {monthLabels.map((ml, i) => {
+                    // Only show every N months to avoid overlap
+                    const showEvery = Math.max(1, Math.floor(monthLabels.length / 8));
+                    if (i % showEvery !== 0 && i !== monthLabels.length - 1) return null;
+                    return (
+                      <Text key={`ml-${i}`} style={{
+                        position: 'absolute', left: ml.idx * stepX - 14,
+                        fontSize: 8, color: COLORS.textMuted, width: 30, textAlign: 'center',
+                      }}>{ml.label}</Text>
+                    );
+                  })}
+                </View>
               </View>
 
               {/* Legend */}
-              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: SPACING.lg }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: SPACING.xl, marginTop: SPACING.sm }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f97316' }} />
-                  <Text style={{ fontSize: 9, color: COLORS.textMuted }}>Condizione (CTL)</Text>
+                  <View style={{ width: 16, height: 3, borderRadius: 1.5, backgroundColor: '#f97316' }} />
+                  <Text style={{ fontSize: 10, color: COLORS.textMuted }}>Condizione fisica</Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: '#22c55e40' }} />
-                  <Text style={{ fontSize: 9, color: COLORS.textMuted }}>Forma (TSB)</Text>
+                  <View style={{ width: 16, height: 3, borderRadius: 1.5, backgroundColor: '#9ca3af' }} />
+                  <Text style={{ fontSize: 10, color: COLORS.textMuted }}>Affaticamento</Text>
                 </View>
               </View>
 
-              {/* Interpretation */}
-              <View style={{ marginTop: SPACING.sm, backgroundColor: COLORS.bg, borderRadius: BORDER_RADIUS.sm, padding: SPACING.sm }}>
-                <Text style={{ fontSize: 9, color: COLORS.textMuted, fontStyle: 'italic', textAlign: 'center' }}>
-                  TSB {'>'} 0 = fresco e pronto • TSB {'<'} -10 = affaticato • CTL in crescita = fitness in miglioramento
+              {/* Simple interpretation — no jargon */}
+              <View style={{ marginTop: SPACING.md, backgroundColor: COLORS.bg, borderRadius: BORDER_RADIUS.sm, padding: SPACING.sm }}>
+                <Text style={{ fontSize: 10, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 16 }}>
+                  {curr.tsb > 10
+                    ? '💪 Sei fresco e pronto per dare il massimo. Ottimo momento per un test o una gara!'
+                    : curr.tsb > -10
+                    ? '⚖️ Equilibrio tra allenamento e recupero. Continua così per migliorare costantemente.'
+                    : curr.tsb > -25
+                    ? '😓 Il corpo sta assorbendo il carico degli allenamenti. Considera un giorno di recupero attivo.'
+                    : '🔴 Attenzione: il carico è molto alto. Rischio sovrallenamento — serve riposo!'}
                 </Text>
               </View>
             </View>
