@@ -15,36 +15,29 @@ const CHART_W = SCREEN_W - 80;
 // ---- Supercompensation Curve (visual educational diagram) ----
 function SupercompensationCurve() {
   const W = SCREEN_W - 64;
-  const H = 140;
+  const H = 130;
+  const BOTTOM_LABELS_H = 60;
 
   // Points describing the supercompensation curve
-  // Baseline → dip (fatigue) → recovery → supercompensation peak → return
   const curvePoints = [
-    { x: 0, y: 0.5 },      // baseline
-    { x: 0.08, y: 0.5 },    // pre-stimulus
-    { x: 0.12, y: 0.3 },    // stimulus applied
-    { x: 0.18, y: 0.15 },   // fatigue trough
-    { x: 0.28, y: 0.35 },   // recovery start
-    { x: 0.4, y: 0.5 },     // back to baseline
-    { x: 0.52, y: 0.65 },   // supercompensation rising
-    { x: 0.62, y: 0.78 },   // peak supercompensation
-    { x: 0.72, y: 0.72 },   // starting to decline
-    { x: 0.85, y: 0.55 },   // returning
-    { x: 1.0, y: 0.5 },     // back to baseline
+    { x: 0, y: 0.5 },
+    { x: 0.08, y: 0.5 },
+    { x: 0.12, y: 0.3 },
+    { x: 0.18, y: 0.15 },
+    { x: 0.28, y: 0.35 },
+    { x: 0.4, y: 0.5 },
+    { x: 0.52, y: 0.65 },
+    { x: 0.62, y: 0.78 },
+    { x: 0.72, y: 0.72 },
+    { x: 0.85, y: 0.55 },
+    { x: 1.0, y: 0.5 },
   ];
 
   const toX = (pct: number) => pct * W;
   const toY = (pct: number) => H - pct * H;
 
-  // Phase labels
-  const phases = [
-    { x: 0.15, label: 'STIMOLO', color: '#ef4444', icon: 'flash' },
-    { x: 0.30, label: 'RECUPERO', color: '#eab308', icon: 'refresh' },
-    { x: 0.62, label: 'SUPER-\nCOMPENSAZIONE', color: '#22c55e', icon: 'trending-up' },
-  ];
-
   return (
-    <View style={{ height: H + 50, marginBottom: SPACING.md }}>
+    <View style={{ height: H + BOTTOM_LABELS_H, marginBottom: SPACING.md }}>
       {/* Baseline dashed line */}
       <View style={{
         position: 'absolute', left: 0, right: 0,
@@ -83,7 +76,6 @@ function SupercompensationCurve() {
         const length = Math.sqrt(dx * dx + dy * dy);
         const angle = Math.atan2(dy, dx) * (180 / Math.PI);
 
-        // Color based on phase
         let color = COLORS.lime;
         if (point.y < 0.5 && prev.y <= 0.5 && point.x < 0.4) color = '#ef4444';
         else if (point.y >= 0.5 && point.x < 0.42) color = '#eab308';
@@ -121,20 +113,29 @@ function SupercompensationCurve() {
         position: 'absolute', left: toX(0.10) - 6, top: toY(0.5) - 16,
       }} />
 
-      {/* Phase labels at bottom */}
-      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row' }}>
-        {phases.map((p, i) => (
-          <View key={i} style={{
-            position: 'absolute', left: toX(p.x) - 30,
-            width: 65, alignItems: 'center',
-          }}>
+      {/* Phase labels — evenly spaced row below the chart, no overlap */}
+      <View style={{
+        position: 'absolute', top: H + 6, left: 0, right: 0,
+        flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-start',
+      }}>
+        {[
+          { icon: '⚡', label: 'STIMOLO', color: '#ef4444' },
+          { icon: '🔄', label: 'RECUPERO', color: '#eab308' },
+          { icon: '📈', label: 'SUPERCOMP.', color: '#22c55e' },
+        ].map((p, i) => (
+          <View key={i} style={{ alignItems: 'center', flex: 1 }}>
             <View style={{
-              width: 20, height: 20, borderRadius: 10,
-              backgroundColor: p.color + '20', alignItems: 'center', justifyContent: 'center',
+              width: 28, height: 28, borderRadius: 14,
+              backgroundColor: p.color + '15',
+              borderWidth: 1, borderColor: p.color + '40',
+              alignItems: 'center', justifyContent: 'center',
             }}>
-              <Ionicons name={p.icon as any} size={10} color={p.color} />
+              <Text style={{ fontSize: 14 }}>{p.icon}</Text>
             </View>
-            <Text style={{ fontSize: 7, color: p.color, fontWeight: '800', textAlign: 'center', marginTop: 2 }}>
+            <Text style={{
+              fontSize: 9, color: p.color, fontWeight: '800',
+              textAlign: 'center', marginTop: 3,
+            }}>
               {p.label}
             </Text>
           </View>
@@ -162,68 +163,58 @@ function MaturationBar({ pct, status }: { pct: number; status: string }) {
 function ProjectionChart({ projection }: { projection: any[] }) {
   if (!projection || projection.length < 2) return null;
 
-  const CHART_H = 160;
-  const PAD_L = 30;
-  const chartW = SCREEN_W - 64 - PAD_L - 10;
+  const CHART_H = 170;
+  const PAD_L = 35;
+  const PAD_R = 15;
+  const chartW = SCREEN_W - 64 - PAD_L - PAD_R;
   const stepX = chartW / (projection.length - 1);
 
   const allVals = projection.flatMap(p => [p.fitness, p.fatigue, p.form]);
-  const maxV = Math.max(...allVals, 1) * 1.2;
+  const maxV = Math.max(...allVals, 1) * 1.15;
   const minV = Math.min(...allVals, 0) - 2;
   const range = maxV - minV || 1;
 
   const toY = (v: number) => CHART_H - ((v - minV) / range) * CHART_H;
-
-  const drawLine = (data: any[], key: string, color: string, width: number, dashed: boolean) => {
-    return data.map((point: any, i: number) => {
-      if (i === 0) return null;
-      const prev = data[i - 1];
-      const x1 = PAD_L + (i - 1) * stepX;
-      const x2 = PAD_L + i * stepX;
-      const y1 = toY(prev[key]);
-      const y2 = toY(point[key]);
-      const dx = x2 - x1, dy = y2 - y1;
-      const length = Math.sqrt(dx * dx + dy * dy);
-      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-      return (
-        <View key={`${key}-${i}`} style={{
-          position: 'absolute', left: x1, top: y1,
-          width: length, height: width,
-          backgroundColor: color,
-          transform: [{ rotate: `${angle}deg` }], transformOrigin: 'left center',
-          opacity: dashed ? 0.6 : 1,
-        }} />
-      );
-    });
-  };
-
-  // Zero line
   const zeroY = toY(0);
 
-  // Day labels
-  const dayLabels = projection.filter((_, i) => i % 2 === 0 || i === projection.length - 1);
+  // Find peak form day
+  let peakIdx = 0;
+  let peakForm = projection[0]?.form ?? 0;
+  projection.forEach((p, i) => {
+    if (p.form > peakForm) { peakForm = p.form; peakIdx = i; }
+  });
+
+  // Y-axis grid
+  const yStep = Math.ceil(range / 4 / 5) * 5 || 5;
+  const yGridVals: number[] = [];
+  const gridStart = Math.floor(minV / yStep) * yStep;
+  for (let v = gridStart; v <= maxV; v += yStep) yGridVals.push(v);
+
+  const MONTH_NAMES = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
 
   return (
-    <View style={{ height: CHART_H + 25 }}>
-      {/* Zero line */}
-      {zeroY >= 0 && zeroY <= CHART_H && (
-        <View style={{
-          position: 'absolute', left: PAD_L, right: 10,
-          top: zeroY, height: 1,
-          borderWidth: 1, borderColor: COLORS.cardBorder, borderStyle: 'dashed', opacity: 0.5,
-        }} />
-      )}
+    <View style={{ height: CHART_H + 30 }}>
+      {/* Y-axis gridlines + labels */}
+      {yGridVals.map((val, i) => {
+        const y = toY(val);
+        if (y < 0 || y > CHART_H) return null;
+        return (
+          <React.Fragment key={`yg-${i}`}>
+            <View style={{
+              position: 'absolute', left: PAD_L, right: PAD_R,
+              top: y, height: 1,
+              backgroundColor: val === 0 ? '#555' : COLORS.cardBorder,
+              opacity: val === 0 ? 0.6 : 0.3,
+            }} />
+            <Text style={{
+              position: 'absolute', left: 0, top: y - 6,
+              fontSize: 8, color: COLORS.textMuted, width: PAD_L - 4, textAlign: 'right',
+            }}>{val}</Text>
+          </React.Fragment>
+        );
+      })}
 
-      {/* Grid lines */}
-      {[0.25, 0.5, 0.75].map((pct, i) => (
-        <View key={`grid-${i}`} style={{
-          position: 'absolute', left: PAD_L, right: 10,
-          top: pct * CHART_H, height: 1,
-          backgroundColor: COLORS.cardBorder, opacity: 0.2,
-        }} />
-      ))}
-
-      {/* Form area (green if positive, red if negative) */}
+      {/* Form area (green above 0, red below) */}
       {projection.map((point, i) => {
         const x = PAD_L + i * stepX;
         const yForm = toY(point.form);
@@ -233,20 +224,79 @@ function ProjectionChart({ projection }: { projection: any[] }) {
         return (
           <View key={`form-area-${i}`} style={{
             position: 'absolute', left: x - stepX / 2, top,
-            width: stepX, height: h,
-            backgroundColor: point.form >= 0 ? '#22c55e10' : '#ef444410',
+            width: stepX + 1, height: Math.max(h, 0),
+            backgroundColor: point.form >= 0 ? '#22c55e15' : '#ef444415',
           }} />
         );
       })}
 
-      {/* Fitness line (orange, dashed = future) */}
-      {drawLine(projection, 'fitness', '#f97316', 2.5, true)}
+      {/* Today vertical line */}
+      <View style={{
+        position: 'absolute', left: PAD_L, top: 0,
+        width: 2, height: CHART_H,
+        backgroundColor: COLORS.lime, opacity: 0.7,
+      }} />
+      <View style={{
+        position: 'absolute', left: PAD_L - 14, top: -14,
+        backgroundColor: COLORS.lime + '20', paddingHorizontal: 5, paddingVertical: 1,
+        borderRadius: 4, borderWidth: 1, borderColor: COLORS.lime + '40',
+      }}>
+        <Text style={{ fontSize: 7, color: COLORS.lime, fontWeight: '900' }}>OGGI</Text>
+      </View>
 
-      {/* Fatigue line (grey, dashed) */}
-      {drawLine(projection, 'fatigue', '#9ca3af', 1.5, true)}
+      {/* Future zone background */}
+      <View style={{
+        position: 'absolute', left: PAD_L + stepX, top: 0,
+        right: PAD_R, height: CHART_H,
+        backgroundColor: '#3b82f605', borderLeftWidth: 0,
+      }} />
 
-      {/* Form line (green/red) */}
-      {projection.map((point, i) => {
+      {/* Fitness line (orange) */}
+      {projection.map((point: any, i: number) => {
+        if (i === 0) return null;
+        const prev = projection[i - 1];
+        const x1 = PAD_L + (i - 1) * stepX;
+        const x2 = PAD_L + i * stepX;
+        const y1 = toY(prev.fitness);
+        const y2 = toY(point.fitness);
+        const dx = x2 - x1, dy = y2 - y1;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+        return (
+          <View key={`fit-${i}`} style={{
+            position: 'absolute', left: x1, top: y1,
+            width: length, height: 2.5,
+            backgroundColor: '#f97316',
+            transform: [{ rotate: `${angle}deg` }], transformOrigin: 'left center',
+            opacity: i === 1 ? 1 : 0.7,
+          }} />
+        );
+      })}
+
+      {/* Fatigue line (grey) */}
+      {projection.map((point: any, i: number) => {
+        if (i === 0) return null;
+        const prev = projection[i - 1];
+        const x1 = PAD_L + (i - 1) * stepX;
+        const x2 = PAD_L + i * stepX;
+        const y1 = toY(prev.fatigue);
+        const y2 = toY(point.fatigue);
+        const dx = x2 - x1, dy = y2 - y1;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+        return (
+          <View key={`fat-${i}`} style={{
+            position: 'absolute', left: x1, top: y1,
+            width: length, height: 1.5,
+            backgroundColor: '#9ca3af',
+            transform: [{ rotate: `${angle}deg` }], transformOrigin: 'left center',
+            opacity: 0.5,
+          }} />
+        );
+      })}
+
+      {/* Form line (green/red, thicker) */}
+      {projection.map((point: any, i: number) => {
         if (i === 0) return null;
         const prev = projection[i - 1];
         const x1 = PAD_L + (i - 1) * stepX;
@@ -260,44 +310,84 @@ function ProjectionChart({ projection }: { projection: any[] }) {
         return (
           <View key={`form-${i}`} style={{
             position: 'absolute', left: x1, top: y1,
-            width: length, height: 2,
+            width: length, height: 2.5,
             backgroundColor: color,
             transform: [{ rotate: `${angle}deg` }], transformOrigin: 'left center',
           }} />
         );
       })}
 
-      {/* Today marker */}
-      <View style={{
-        position: 'absolute', left: PAD_L, top: 0,
-        width: 1, height: CHART_H,
-        backgroundColor: COLORS.lime, opacity: 0.5,
-      }} />
-      <Text style={{
-        position: 'absolute', left: PAD_L - 8, top: -12,
-        fontSize: 7, color: COLORS.lime, fontWeight: '800',
-      }}>OGGI</Text>
+      {/* Peak marker with label */}
+      {peakIdx > 0 && (() => {
+        const peakX = PAD_L + peakIdx * stepX;
+        const peakY = toY(peakForm);
+        const peakDate = projection[peakIdx]?.date;
+        const dateLabel = peakDate ? (() => {
+          const d = new Date(peakDate + 'T00:00:00');
+          return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]}`;
+        })() : `+${projection[peakIdx]?.day_offset}g`;
+        return (
+          <>
+            <View style={{
+              position: 'absolute', left: peakX - 6, top: peakY - 6,
+              width: 12, height: 12, borderRadius: 6,
+              backgroundColor: '#22c55e', borderWidth: 2, borderColor: '#fff',
+              zIndex: 5,
+            }} />
+            <View style={{
+              position: 'absolute', left: peakX - 40, top: peakY - 30,
+              width: 80, alignItems: 'center', zIndex: 6,
+            }}>
+              <View style={{
+                backgroundColor: '#22c55e20', paddingHorizontal: 8, paddingVertical: 2,
+                borderRadius: 6, borderWidth: 1, borderColor: '#22c55e40',
+              }}>
+                <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '900', textAlign: 'center' }}>
+                  ⭐ PICCO {dateLabel}
+                </Text>
+              </View>
+            </View>
+          </>
+        );
+      })()}
 
-      {/* X-axis labels */}
-      <View style={{ position: 'absolute', top: CHART_H + 4, left: PAD_L }}>
+      {/* End point labels */}
+      {projection.length > 0 && (() => {
+        const last = projection[projection.length - 1];
+        const x = PAD_L + (projection.length - 1) * stepX;
+        return (
+          <>
+            <Text style={{
+              position: 'absolute', left: x + 4, top: toY(last.fitness) - 6,
+              fontSize: 8, color: '#f97316', fontWeight: '800',
+            }}>{last.fitness}</Text>
+            <Text style={{
+              position: 'absolute', left: x + 4, top: toY(last.form) - 6,
+              fontSize: 8, color: last.form >= 0 ? '#22c55e' : '#ef4444', fontWeight: '800',
+            }}>{last.form}</Text>
+          </>
+        );
+      })()}
+
+      {/* X-axis day labels */}
+      <View style={{ position: 'absolute', top: CHART_H + 6, left: PAD_L }}>
         {projection.map((p, i) => {
+          // Show every 3 days + last
           if (i % 3 !== 0 && i !== projection.length - 1) return null;
+          const label = i === 0 ? 'Oggi' : p.date ? (() => {
+            const d = new Date(p.date + 'T00:00:00');
+            return `${d.getDate()}/${(d.getMonth() + 1)}`;
+          })() : `+${p.day_offset}g`;
           return (
             <Text key={`xl-${i}`} style={{
-              position: 'absolute', left: i * stepX - 10,
-              fontSize: 8, color: COLORS.textMuted, width: 22, textAlign: 'center',
-            }}>{i === 0 ? 'Oggi' : `+${p.day_offset}g`}</Text>
+              position: 'absolute', left: i * stepX - 14,
+              fontSize: 8, color: i === 0 ? COLORS.lime : COLORS.textMuted,
+              fontWeight: i === 0 ? '800' : '400',
+              width: 30, textAlign: 'center',
+            }}>{label}</Text>
           );
         })}
       </View>
-
-      {/* Y-axis labels */}
-      <Text style={{ position: 'absolute', left: 0, top: 0, fontSize: 7, color: COLORS.textMuted }}>
-        {Math.round(maxV)}
-      </Text>
-      <Text style={{ position: 'absolute', left: 0, top: CHART_H - 8, fontSize: 7, color: COLORS.textMuted }}>
-        {Math.round(minV)}
-      </Text>
     </View>
   );
 }
@@ -462,20 +552,41 @@ export default function SupercompensazioneScreen() {
             </View>
 
             {/* Interpretation message */}
-            {projection.length > 1 && (
-              <View style={{
-                marginTop: SPACING.md, backgroundColor: '#3b82f608',
-                borderRadius: BORDER_RADIUS.sm, padding: SPACING.sm,
-                borderLeftWidth: 3, borderLeftColor: '#3b82f6',
-              }}>
-                <Text style={{ fontSize: 10, color: COLORS.textSecondary, lineHeight: 16 }}>
-                  {projection[projection.length - 1].form > projection[0].form
-                    ? `📈 Senza nuovi allenamenti, la tua forma migliorerà grazie al recupero. Tra 14 giorni la forma sarà a ${projection[projection.length - 1].form}.`
-                    : `📉 La condizione fisica sta calando naturalmente. Mantieni gli allenamenti per sostenere il livello attuale.`
-                  }
-                </Text>
-              </View>
-            )}
+            {projection.length > 1 && (() => {
+              const first = projection[0];
+              const last = projection[projection.length - 1];
+              const improving = last.form > first.form;
+              // Find peak
+              let peakDay = 0;
+              let peakForm = first.form;
+              projection.forEach((p: any) => {
+                if (p.form > peakForm) { peakForm = p.form; peakDay = p.day_offset; }
+              });
+              const peakDate = projection.find((p: any) => p.day_offset === peakDay)?.date;
+              const MNAMES = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+              const peakLabel = peakDate ? (() => {
+                const d = new Date(peakDate + 'T00:00:00');
+                return `${d.getDate()} ${MNAMES[d.getMonth()]}`;
+              })() : `tra ${peakDay} giorni`;
+
+              return (
+                <View style={{
+                  marginTop: SPACING.md, backgroundColor: improving ? '#22c55e08' : '#f9731608',
+                  borderRadius: BORDER_RADIUS.md, padding: SPACING.md,
+                  borderWidth: 1, borderColor: improving ? '#22c55e20' : '#f9731620',
+                }}>
+                  <Text style={{ fontSize: 12, color: COLORS.text, fontWeight: '700', marginBottom: 4 }}>
+                    {improving ? '🚀 Il tuo corpo sta caricando energia!' : '📊 Fase di mantenimento'}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: COLORS.textSecondary, lineHeight: 18 }}>
+                    {improving
+                      ? `Gli allenamenti recenti stanno maturando. Vedrai il picco di forma il ${peakLabel}. Continua a riposarti per massimizzare i benefici.`
+                      : `La condizione fisica è stabile. Per far salire la curva, inserisci uno stimolo allenante mirato nei prossimi giorni.`
+                    }
+                  </Text>
+                </View>
+              );
+            })()}
           </View>
         )}
 
