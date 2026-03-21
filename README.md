@@ -51,7 +51,8 @@ Progettata per un runner in fase di ritorno post-infortunio con obiettivo tempo 
 | PyMongo | 4.5.0 | MongoDB driver |
 | Pydantic | 2.12.5 | Data validation |
 | httpx | 0.28.1 | HTTP client (Strava API) |
-| Google Gemini | 2.0 Flash | AI Coach (API gratuita) |
+| Claude 4 Haiku | Anthropic API | AI Coach primario (a consumo, ~$0.10/anno) |
+| Google Gemini | 2.0 Flash | AI Coach fallback (API gratuita) |
 | python-dotenv | 1.2.1 | Env variables |
 
 ### Database
@@ -76,7 +77,7 @@ Progettata per un runner in fase di ritorno post-infortunio con obiettivo tempo 
 | **Visibilità** | Public |
 | **Package Android** | `com.kikkoderiso.corralejo` |
 | **URL Scheme** | `corralejo://` |
-| **EAS Project ID** | `704bb244-c2c0-4a31-9c39-012fa3b87d6c` (account gamess9233) |
+| **EAS Project ID** | `1a7ea756-e936-4b37-b3d9-fd1e35b66331` (account massiminovanni) |
 
 ### Struttura Repository
 ```
@@ -102,7 +103,8 @@ CORRALEJO-2026/
 │   │   ├── progressi.tsx      # Storico VO2max/soglia/previsioni
 │   │   ├── calcolatore.tsx    # Calcolatore passi e previsioni
 │   │   ├── injury-risk.tsx    # Injury Risk Score (analisi predittiva)
-│   │   ├── badges.tsx         # Badge e Trofei (100+ badge, 8 categorie)
+│   │   ├── badges.tsx         # Badge e Trofei (100+ badge, 8 categorie + Passerotto leggendario)
+│   │   ├── supercompensazione.tsx # Supercompensazione: curva, grafico futuro, maturazione, golden day, ROI
 │   │   └── strava-callback.tsx# OAuth callback Strava
 │   ├── src/
 │   │   ├── api.ts             # Client API (tutte le chiamate)
@@ -135,7 +137,7 @@ CORRALEJO-2026/
 - **Frontend** → App React Native con Expo Router, 5 tab principali + schermate modali
 - **Backend** → Single-file FastAPI (`server.py`), async, tutte le route sotto `/api`
 - **Database** → MongoDB Atlas cluster gratuito, 6 collezioni
-- **AI** → Google Gemini (gratuito) per analisi corse (con fallback a analisi algoritmica)
+- **AI** → Claude 4 Haiku (Anthropic, primario) + Google Gemini (fallback) per analisi corse personalizzate
 - **Strava** → OAuth 2.0 con deep linking per sync attività
 
 ---
@@ -236,6 +238,7 @@ Impellizzeri et al. (2020) hanno dimostrato che il mathematical coupling (il car
 
 ### 1. 🏠 Dashboard (Home)
 La schermata principale con panoramica completa:
+- **Frase motivazionale**: "Tutti vogliono andare in paradiso ma nessuno è disposto a morire per arrivarci"
 - **Countdown gara**: giorni/ore/minuti alla Mezza Maratona di Fuerteventura
 - **Card sessione di oggi**: tipo, titolo, descrizione, distanza/passo/durata target
 - **Bottone "SEGNA FATTO"**: completa la sessione di oggi con un tap
@@ -328,9 +331,10 @@ Analisi completa di una corsa:
 - **Efficienza Aerobica (Pa:Hr)**: decoupling cardiaco tra 1ª e 2ª metà corsa (solo corse a passo costante, CV<10%)
 - **Rilevamento ripetute**: banner automatico quando la variabilità del passo è alta (CV >15%)
 - **Cadenza e dislivello**: dati da Strava
-- **Analisi AI** (generata da Google Gemini o algoritmo interno):
+- **Supercompensazione**: tipo adattamento (neuromuscolare/metabolico/strutturale), barra maturazione, data beneficio massimo
+- **Analisi AI** (Claude 4 Haiku primario, Gemini fallback):
   - 9 sezioni strutturate: intro, dati corsa, classificazione, utilità per obiettivo, positivi, lacune, reality check con tempi stimati, consigli tecnici, voto/10
-  - Tono naturale da allenatore esperto (non template)
+  - Persona "Renato Canova", risposte sempre uniche (temperature 0.9)
   - Raccomandazioni con workout specifici
 
 ### 9. 📋 Dettaglio Sessione
@@ -374,6 +378,12 @@ Sistema gamification con **100+ badge** in 8 categorie:
 Badge azzerati e ricominciati dal **23 marzo 2026**. Schermata dedicata (`badges.tsx`) accessibile da Profilo → Medaglie, con progress bar, categorie espandibili, stati locked/unlocked.
 Ricalcolo automatico dopo ogni sync Strava.
 
+#### Badge Leggendario: Passerotto 🐦
+- Card hero separata dalle categorie, design premium con bordo dorato
+- Condizioni: 5K sotto i 20 minuti **E** 10K sotto i 4:15/km
+- Checklist visiva delle 2 condizioni con progresso
+- Messaggio celebrativo quando sbloccato
+
 ### 13. 🧮 Calcolatore
 Strumenti di calcolo per il runner:
 - **Passi da VDOT**: mostra VDOT corrente e i 5 passi di Daniels
@@ -413,11 +423,13 @@ Gestione OAuth Strava:
 - Auto-completamento sessioni corrispondenti
 - Trigger ricalcolo VDOT dopo sync
 
-### 4. Analisi AI delle Corse
-- Analisi tramite Google Gemini (gratuito) con fallback algoritmico avanzato
-- Confronto dettagliato con la sessione pianificata
-- Analisi FC vs zone VDOT, passo vs target, distanza
-- Raccomandazioni personalizzate per la prossima sessione
+### 4. Analisi AI delle Corse (Claude 4 Haiku)
+- **Priorità 1**: Claude 4 Haiku (Anthropic) — risposte uniche, personalizzate, mai template (temperature 0.9)
+- **Priorità 2**: Google Gemini (fallback gratuito)
+- **Priorità 3**: Analisi algoritmica avanzata (fallback offline)
+- Persona: "Renato Canova" — allenatore italiano, tono diretto e schietto
+- 9 sezioni strutturate: intro, dati, classificazione, utilità obiettivo, positivi, gap, reality check, consigli tecnici, voto
+- Confronto con sessione pianificata, VDOT, settimane alla gara
 - Funziona anche per corse extra fuori dal piano
 
 ### 4b. Injury Risk Score Avanzato
@@ -433,11 +445,55 @@ Gestione OAuth Strava:
 ### 4c. Fitness & Freshness (Banister 1975)
 - **Modello Impulse-Response** di Banister per monitorare forma atletica
 - **TRIMP** (Lucia's method): `durata × HR_reserve × (0.64 × e^(1.92 × HR_reserve))`
-- **CTL** (Fitness): media mobile esponenziale 42 giorni del TRIMP
-- **ATL** (Fatigue): media mobile esponenziale 7 giorni del TRIMP
-- **TSB** (Form): CTL - ATL → indica la "freschezza" dell'atleta
-- Timeline con snapshot settimanali + stato corrente (Fresco/Neutro/Affaticato/Sovrallenamento)
-- Mini chart con CTL dots e TSB bars nella sezione Progressi
+- **CTL** (Condizione Fisica): media mobile esponenziale 42 giorni del TRIMP
+- **ATL** (Affaticamento): media mobile esponenziale 7 giorni del TRIMP
+- **TSB** (Forma Fisica): CTL - ATL → indica la "freschezza" dell'atleta
+- Grafico stile Strava con 3 linee: arancione (CTL), grigia (ATL), verde/rossa (TSB)
+- Area sfumata verde (forma positiva) / rossa (forma negativa) sotto la linea TSB
+- **Touch interattivo**: trascina il dito per vedere tooltip con data + valori esatti
+- Legenda con 3 elementi + interpretazione (Fresco/Neutro/Affaticato/Sovrallenamento)
+
+### 4f. Supercompensazione
+Pagina dedicata basata sul modello Fitness-Fatigue (impulso-risposta). I cambiamenti strutturali (mitocondri, capillari, enzimi) richiedono 10-21 giorni per manifestarsi.
+
+#### Curva Educativa
+- Diagramma visuale della supercompensazione con 3 fasi: Stimolo → Recupero → Supercompensazione
+- 3 tipi di adattamento:
+  - ⚡ **Neuromuscolare** (3-7 giorni): sprint, salite, velocità
+  - 🔥 **Metabolico** (7-14 giorni): soglia, ripetute, fartlek
+  - 🧬 **Strutturale** (14-21 giorni): lunghi, base aerobica
+
+#### Grafico del Futuro (Progress Projection)
+- Proiezione della forma fisica a 14 giorni nel futuro
+- Linee: Condizione (arancione), Affaticamento (grigia), Forma (verde/rossa)
+- Marcatore ⭐ PICCO con data esatta del massimo beneficio
+- Label "OGGI" + date reali sull'asse X
+- Messaggio interpretativo: "Il tuo corpo sta caricando energia!"
+
+#### Barra di Maturazione (Ripening Bar)
+- Ogni allenamento è un seme che deve crescere
+- Lista ultimi 10 allenamenti con: tipo, distanza, passo, data
+- Stato maturazione: 🟦 In lavorazione → 🟩 Consolidamento → 💎 Attivo!
+- Barra progresso con percentuale e data beneficio massimo
+- Summary badges: totale in lavoro / consolidamento / attivi
+
+#### Invest & Cash Out (Golden Day)
+- Analizza gli ultimi 21 giorni e identifica il **Golden Day**
+- Widget circolare: "Hai accumulato X km di potenziale. Il tuo corpo trasformerà questo sforzo in massima potenza tra N giorni."
+- Data esatta del giorno perfetto per gara o test
+
+#### Training ROI (Portafoglio Biologico)
+- Tabella con linguaggio finanza: investimento, attività, maturazione, rendimento
+- 3 categorie: Neuromuscolare (+8% Reattività), Metabolico (+5% Efficienza), Strutturale (+3% Capillari)
+- Insight automatico sulla composizione del portafoglio
+
+#### Supercompensazione nel Dettaglio Corsa
+- Ogni corsa mostra la sezione Supercompensazione con:
+  - Tipo di adattamento (neuromuscolare/metabolico/strutturale) con icona e colore
+  - Spiegazione di cosa succede nel corpo
+  - Barra di maturazione con percentuale
+  - Data del beneficio massimo
+  - Messaggio contestuale ("Vedrai il massimo beneficio il Mar 2 Apr")
 
 ### 4d. Previsioni Gara v2 (VDOT Daniels)
 - Previsioni basate esclusivamente sul **VDOT di Jack Daniels** (NO Riegel)
@@ -539,7 +595,12 @@ Base URL: `https://corralejo-backend.onrender.com/api`
 ### AI
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
-| POST | `/ai/analyze-run` | Analisi AI (Google Gemini + fallback algoritmico avanzato) |
+| POST | `/ai/analyze-run` | Analisi AI (Claude 4 Haiku → Gemini → fallback algoritmico) |
+
+### Supercompensazione
+| Metodo | Endpoint | Descrizione |
+|---|---|---|
+| GET | `/supercompensation` | Supercompensazione: curva maturazione, proiezione 14gg, golden day, training ROI |
 
 ### Test
 | Metodo | Endpoint | Descrizione |
@@ -729,7 +790,7 @@ npx eas build --platform android --profile preview
 | `DB_NAME` | Nome database (`corralejo`) |
 | `PYTHON_VERSION` | Versione Python (`3.11.11`) |
 | `GEMINI_API_KEY` | API key Google Gemini (gratuito) per AI Coach |
-| `ANTHROPIC_API_KEY` | (Legacy) API key Anthropic Claude |
+| `ANTHROPIC_API_KEY` | API key Anthropic Claude 4 Haiku (AI Coach primario) |
 | `STRAVA_CLIENT_ID` | (Opzionale) Client ID app Strava |
 | `STRAVA_CLIENT_SECRET` | (Opzionale) Client Secret app Strava |
 
@@ -831,6 +892,14 @@ npx expo run:android
 - [x] **Previsioni Gara v2 (VDOT puro)** — Previsioni basate esclusivamente su VDOT di Jack Daniels (rimosso Riegel/CRPE). VDOT cap 55, validazione range per distanza, tabella mensile Gen 2025 → oggi, filtri periodo con tempo/passo reale. Endpoint `GET /api/prediction-history`
 - [x] **Fitness & Freshness (Banister 1975)** — Modello Impulse-Response: TRIMP giornaliero (Lucia's method), CTL (42-day EMA), ATL (7-day EMA), TSB = CTL - ATL. 3 card stato + mini chart in Progressi. Endpoint `GET /api/fitness-freshness`
 - [x] **Injury Risk Avanzato (7 fattori)** — Aggiunto Foster Monotony (media/stdev 7gg, alert >2.0) e ACSM 10% Rule (incremento volume max 10%). Pesi ribilanciati su 7 fattori
+
+- [x] **Supercompensazione** — Pagina dedicata con curva educativa, Grafico del Futuro (proiezione 14gg con picco), Barra di Maturazione (stato % per allenamento), Invest & Cash Out (Golden Day), Training ROI (portafoglio biologico). Endpoint `GET /api/supercompensation`
+- [x] **Supercompensazione nel dettaglio corsa** — Ogni corsa mostra tipo adattamento (neuromuscolare/metabolico/strutturale), barra maturazione %, data beneficio massimo
+- [x] **AI Coach Claude 4 Haiku** — Migrato da Gemini a Claude 4 Haiku come AI primario. Temperature 0.9 per risposte sempre diverse. Persona "Renato Canova". Fallback: Gemini → algoritmo
+- [x] **Fitness & Freshness grafico migliorato** — Aggiunta linea Forma Fisica (TSB) verde/rossa con area sfumata. Touch interattivo con tooltip (data + 3 valori). Date allineate su X
+- [x] **Badge Passerotto (leggendario)** — Card hero separata con bordo dorato, checklist 2 condizioni (5K < 20min, 10K < 4:15/km), barra progresso dorata
+- [x] **Frase motivazionale dashboard** — "Tutti vogliono andare in paradiso ma nessuno è disposto a morire per arrivarci"
+- [x] **EAS account migrato** — Da gamess9233 a massiminovanni (limite build raggiunto). ProjectId: `1a7ea756-e936-4b37-b3d9-fd1e35b66331`
 
 ---
 
