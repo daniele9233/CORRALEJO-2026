@@ -1103,6 +1103,7 @@ export default function ProgressiScreen() {
                     style={{ height: FF_CHART_H + 40, marginBottom: SPACING.sm }}
                     onStartShouldSetResponder={() => true}
                     onMoveShouldSetResponder={() => true}
+                    onResponderTerminationRequest={() => false}
                     onResponderGrant={handleTouch}
                     onResponderMove={handleTouch}
                     onResponderRelease={() => setFfTouchIdx(null)}
@@ -1347,21 +1348,33 @@ export default function ProgressiScreen() {
                       );
                     })()}
 
-                    {/* X-axis month labels — evenly spaced */}
+                    {/* X-axis month labels — evenly spaced, no overlap */}
                     <View style={{ position: 'absolute', top: FF_CHART_H + 6, left: FF_CHART_PAD_L, right: FF_CHART_PAD_R }}>
-                      {monthLabels.map((ml, i) => {
-                        const maxLabels = 8;
-                        const showEvery = Math.max(1, Math.ceil(monthLabels.length / maxLabels));
-                        if (i % showEvery !== 0 && i !== monthLabels.length - 1) return null;
-                        const x = ml.idx * stepX;
-                        return (
-                          <Text key={`ml-${i}`} style={{
-                            position: 'absolute', left: x - 16,
-                            fontSize: 9, color: COLORS.textMuted, width: 34, textAlign: 'center',
-                            fontWeight: '500',
-                          }}>{ml.label}</Text>
-                        );
-                      })}
+                      {(() => {
+                        // Calculate how many labels fit without overlapping (min 42px per label)
+                        const minSpacePx = 42;
+                        const totalW = ffChartW;
+                        const maxFit = Math.max(1, Math.floor(totalW / minSpacePx));
+                        const showEvery = Math.max(1, Math.ceil(monthLabels.length / maxFit));
+                        return monthLabels.map((ml, i) => {
+                          if (i % showEvery !== 0 && i !== monthLabels.length - 1) return null;
+                          // Skip last if too close to previous shown
+                          if (i === monthLabels.length - 1 && i % showEvery !== 0) {
+                            const prevShownIdx = Math.floor(i / showEvery) * showEvery;
+                            const prevX = monthLabels[prevShownIdx].idx * stepX;
+                            const thisX = ml.idx * stepX;
+                            if (thisX - prevX < minSpacePx) return null;
+                          }
+                          const x = ml.idx * stepX;
+                          return (
+                            <Text key={`ml-${i}`} style={{
+                              position: 'absolute', left: x - 18,
+                              fontSize: 9, color: COLORS.textMuted, width: 38, textAlign: 'center',
+                              fontWeight: '500',
+                            }}>{ml.label}</Text>
+                          );
+                        });
+                      })()}
                     </View>
                   </View>
                 );
