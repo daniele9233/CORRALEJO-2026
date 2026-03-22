@@ -1143,14 +1143,14 @@ async def get_run(run_id: str):
     if analysis and analysis.get("ai_source") != "claude" and ANTHROPIC_API_KEY:
         logger.info(f"Auto-regenerating analysis for run {run_id} (was: {analysis.get('ai_source')})")
         try:
-            from pydantic import BaseModel as _BM
-            _req = type('R', (), {'run_id': run_id})()
-            _req.run_id = run_id
             new_analysis = await analyze_run(AIAnalyzeRequest(run_id=run_id))
-            if new_analysis and new_analysis.get("ai_source") == "claude":
+            if isinstance(new_analysis, dict) and new_analysis.get("ai_source") == "claude":
                 analysis = new_analysis
+                logger.info(f"Successfully regenerated analysis for {run_id} with Claude")
+            else:
+                logger.warning(f"Regeneration returned non-claude: {type(new_analysis)}")
         except Exception as e:
-            logger.warning(f"Auto-regeneration failed: {e}")
+            logger.warning(f"Auto-regeneration failed: {e}", exc_info=True)
 
     # Find planned session for this run's date
     planned_session = None
@@ -1238,6 +1238,7 @@ async def get_run(run_id: str):
     # ---- Supercompensation data for this run ----
     supercomp_data = None
     try:
+        from datetime import date as dt_date
         run_type = (run.get("run_type") or run.get("type") or "").lower().replace(" ", "_")
         ADAPT_MAP = {
             "ripetute": ("metabolic", 10, "+5% Efficienza Mitocondriale", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
@@ -1253,10 +1254,21 @@ async def get_run(run_id: str):
             "gara": ("metabolic", 12, "+6% Adattamento Gara", "Lo sforzo massimale in gara stimola adattamenti profondi a livello metabolico."),
             "interval": ("metabolic", 10, "+5% Efficienza Mitocondriale", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
             "sprint": ("neuromuscular", 5, "+8% Reattività Neuromuscolare", "Sprint, salite, velocità. Il sistema nervoso si adatta rapidamente."),
+            # Strava types
+            "run": ("metabolic", 10, "+3% Adattamento Generale", "L'allenamento stimola un adattamento generale del sistema aerobico."),
+            "race": ("metabolic", 12, "+6% Adattamento Gara", "Lo sforzo massimale in gara stimola adattamenti profondi a livello metabolico."),
+            "long_run": ("structural", 14, "+3% Densità Capillare", "Lunghi, base aerobica. Nuovi capillari e mitocondri vengono costruiti."),
+            "workout": ("metabolic", 10, "+5% Efficienza Mitocondriale", "Soglia, ripetute, fartlek. Enzimi e mitocondri diventano più efficienti."),
         }
         DEFAULT_A = ("metabolic", 10, "+3% Adattamento Generale", "L'allenamento stimola un adattamento generale del sistema aerobico.")
 
         cat, days_to_peak, benefit, explanation = ADAPT_MAP.get(run_type, DEFAULT_A)
+        # If run_type not found, also try without underscores
+        if run_type not in ADAPT_MAP and run_type:
+            for key in ADAPT_MAP:
+                if key in run_type or run_type in key:
+                    cat, days_to_peak, benefit, explanation = ADAPT_MAP[key]
+                    break
 
         # Also check by pace — if very fast relative to threshold, likely neuromuscular
         avg_pace_str = run.get("avg_pace", "")
@@ -1566,7 +1578,7 @@ CONTESTO SETTIMANA:
                 "content-type": "application/json",
             }
             claude_payload = {
-                "model": "claude-haiku-4-20250514",
+                "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 2000,
                 "temperature": 0.9,
                 "system": system_msg,

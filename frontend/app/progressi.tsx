@@ -534,6 +534,7 @@ export default function ProgressiScreen() {
   const [selectedPeriod, setSelectedPeriod] = useState<string>('tutti');
   const [tooltip, setTooltip] = useState<{ x: number; y: number; value: string; label: string } | null>(null);
   const [ffTouchIdx, setFfTouchIdx] = useState<number | null>(null);
+  const [scrollEnabled, setScrollEnabled] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
@@ -639,7 +640,7 @@ export default function ProgressiScreen() {
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent} scrollEnabled={scrollEnabled}>
 
         {/* VO2max Card */}
         <View style={styles.sectionCard}>
@@ -1080,12 +1081,21 @@ export default function ProgressiScreen() {
 
                 const toY = (val: number) => FF_CHART_H - ((val - Math.min(minTsb, -10)) / totalRange) * FF_CHART_H;
 
-                // Touch handler
-                const handleTouch = (evt: any) => {
+                // Touch handler — disables parent scroll while dragging
+                const handleTouchStart = (evt: any) => {
+                  setScrollEnabled(false);
                   const touchX = evt.nativeEvent.locationX - FF_CHART_PAD_L;
                   const idx = Math.round(touchX / stepX);
-                  const clampedIdx = Math.max(0, Math.min(ff.length - 1, idx));
-                  setFfTouchIdx(clampedIdx);
+                  setFfTouchIdx(Math.max(0, Math.min(ff.length - 1, idx)));
+                };
+                const handleTouchMove = (evt: any) => {
+                  const touchX = evt.nativeEvent.locationX - FF_CHART_PAD_L;
+                  const idx = Math.round(touchX / stepX);
+                  setFfTouchIdx(Math.max(0, Math.min(ff.length - 1, idx)));
+                };
+                const handleTouchEnd = () => {
+                  setScrollEnabled(true);
+                  setFfTouchIdx(null);
                 };
 
                 const touchedPoint = ffTouchIdx !== null ? ff[ffTouchIdx] : null;
@@ -1104,9 +1114,9 @@ export default function ProgressiScreen() {
                     onStartShouldSetResponder={() => true}
                     onMoveShouldSetResponder={() => true}
                     onResponderTerminationRequest={() => false}
-                    onResponderGrant={handleTouch}
-                    onResponderMove={handleTouch}
-                    onResponderRelease={() => setFfTouchIdx(null)}
+                    onResponderGrant={handleTouchStart}
+                    onResponderMove={handleTouchMove}
+                    onResponderRelease={handleTouchEnd}
                   >
                     {/* Tooltip on touch */}
                     {touchedPoint && ffTouchIdx !== null && (
@@ -1344,6 +1354,20 @@ export default function ProgressiScreen() {
                             backgroundColor: touchedPoint.tsb >= 0 ? '#22c55e' : '#ef4444',
                             borderWidth: 2, borderColor: '#fff', zIndex: 15,
                           }} />
+                        </>
+                      );
+                    })()}
+
+                    {/* Current values at end of lines (Strava-style) */}
+                    {ff.length > 0 && !touchedPoint && (() => {
+                      const last = ff[ff.length - 1];
+                      const endX = FF_CHART_PAD_L + (ff.length - 1) * stepX + 4;
+                      return (
+                        <>
+                          <Text style={{ position: 'absolute', left: endX, top: toY(last.ctl) - 6, fontSize: 9, color: '#f97316', fontWeight: '800' }}>{last.ctl}</Text>
+                          <View style={{ position: 'absolute', left: endX - 7, top: toY(last.ctl) - 3, width: 6, height: 6, borderRadius: 3, backgroundColor: '#f97316', borderWidth: 1.5, borderColor: '#fff' }} />
+                          <Text style={{ position: 'absolute', left: endX, top: toY(last.atl) - 6, fontSize: 9, color: '#9ca3af', fontWeight: '800' }}>{last.atl}</Text>
+                          <View style={{ position: 'absolute', left: endX - 7, top: toY(last.atl) - 3, width: 6, height: 6, borderRadius: 3, backgroundColor: '#9ca3af', borderWidth: 1.5, borderColor: '#fff' }} />
                         </>
                       );
                     })()}
