@@ -3333,6 +3333,12 @@ async def sync_strava_activities():
 
     sync_message = f"Sincronizzate {synced} nuove corse, {matched} abbinate a corse esistenti"
 
+    # ---- SMART PUSH NOTIFICATIONS ----
+    try:
+        await send_smart_notifications(synced, matched)
+    except Exception as e:
+        logger.error(f"Smart notifications error: {e}")
+
     return {
         "synced": synced,
         "matched": matched,
@@ -3342,6 +3348,98 @@ async def sync_strava_activities():
         "adaptation": adaptation_result,
         "vdot_update": vdot_update,
     }
+
+
+async def send_smart_notifications(synced: int, matched: int):
+    """Send intelligent push notifications based on user state."""
+    from datetime import date as dt_date
+
+    # 1. BADGE SBLOCCATI — check for newly unlocked badges
+    try:
+        badges = await db.badges.find({}, {"_id": 0}).to_list(200)
+        today_str = dt_date.today().isoformat()
+        newly_unlocked = [b for b in badges if b.get("unlocked") and b.get("unlocked_date") == today_str]
+        for badge in newly_unlocked:
+            badge_name = badge.get("name", "Badge")
+            badge_cat = badge.get("cat", "")
+            if badge.get("id") == "passerotto":
+                await send_push_notification(
+                    "🐦 PASSEROTTO SBLOCCATO!",
+                    f"Hai raggiunto il badge leggendario! 5K sotto 20 min e 10K sotto 4:15/km. Sei un campione!"
+                )
+            else:
+                await send_push_notification(
+                    f"🏆 Badge sbloccato: {badge_name}!",
+                    f"Complimenti! Hai appena ottenuto il badge \"{badge_name}\" nella categoria {badge_cat}."
+                )
+    except Exception as e:
+        logger.warning(f"Badge notification error: {e}")
+
+    # 2. GOLDEN DAY — notify if golden day is within 3 days
+    try:
+        supercomp = await get_supercompensation()
+        if supercomp and supercomp.get("golden_day"):
+            golden = supercomp["golden_day"]
+            golden_date = golden.get("date", "")
+            if golden_date:
+                gd = dt_date.fromisoformat(golden_date)
+                days_until = (gd - dt_date.today()).days
+                if 1 <= days_until <= 3:
+                    await send_push_notification(
+                        f"⭐ Il tuo Golden Day è tra {days_until} giorn{'o' if days_until == 1 else 'i'}!",
+                        f"Il {gd.strftime('%d/%m')} il tuo corpo sarà al massimo della forma. Segna il calendario per un test o una gara!"
+                    )
+                elif days_until == 0:
+                    await send_push_notification(
+                        "🌟 OGGI è il tuo Golden Day!",
+                        "Il tuo corpo è al picco della forma. È il momento perfetto per un Personal Best!"
+                    )
+    except Exception as e:
+        logger.warning(f"Golden day notification error: {e}")
+
+    # 3. INATTIVITÀ — warn if no runs in last 3+ days
+    try:
+        recent = await db.runs.find({}, {"_id": 0, "date": 1}).sort("date", -1).limit(1).to_list(1)
+        if recent:
+            last_run_date = dt_date.fromisoformat(recent[0].get("date", "2020-01-01")[:10])
+            days_off = (dt_date.today() - last_run_date).days
+            if days_off == 3:
+                await send_push_notification(
+                    "🔔 3 giorni senza correre",
+                    "Il tuo corpo ha recuperato. È il momento di tornare in pista! Il badge Comeback ti aspetta."
+                )
+            elif days_off == 5:
+                await send_push_notification(
+                    "⚠️ 5 giorni di pausa",
+                    "La tua condizione fisica sta calando. Anche una corsetta leggera aiuta a mantenere la base!"
+                )
+            elif days_off == 7:
+                await send_push_notification(
+                    "🚨 Una settimana senza corse",
+                    "Stai perdendo gli adattamenti costruiti. Torna a correre oggi, anche solo 20 minuti!"
+                )
+    except Exception as e:
+        logger.warning(f"Inactivity notification error: {e}")
+
+    # 4. NUOVO PB — notify if sync brought new personal bests
+    if synced > 0:
+        try:
+            today_pbs = await db.best_efforts.find(
+                {"run_date": {"$gte": dt_date.today().isoformat()}, "pr_rank": 1},
+                {"_id": 0}
+            ).to_list(10)
+            for pb in today_pbs:
+                dist = pb.get("distance_name", "")
+                time_val = pb.get("elapsed_time", 0)
+                mins = int(time_val // 60)
+                secs = int(time_val % 60)
+                await send_push_notification(
+                    f"🥇 Nuovo Record Personale: {dist}!",
+                    f"Hai corso {dist} in {mins}:{secs:02d}! Il tuo corpo sta migliorando!"
+                )
+        except Exception as e:
+            logger.warning(f"PB notification error: {e}")
+
 
 @api_router.post("/strava/resync-details")
 async def resync_strava_details():

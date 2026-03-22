@@ -36,10 +36,15 @@ async function registerForPushNotifications() {
       importance: Notifications.AndroidImportance.HIGH,
       sound: 'default',
     });
+    await Notifications.setNotificationChannelAsync('smart-alerts', {
+      name: 'Badge e avvisi intelligenti',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+    });
   }
 
   const pushToken = await Notifications.getExpoPushTokenAsync({
-    projectId: 'b6eee442-2a97-4b31-803f-21db08504ca3',
+    projectId: '1a7ea756-e936-4b37-b3d9-fd1e35b66331',
   });
   try {
     await api.registerPushToken(pushToken.data);
@@ -71,10 +76,22 @@ async function scheduleDailyReminder() {
         const pace = todaySession.target_pace ? `@ ${todaySession.target_pace}/km` : '';
 
         if (sessionType === 'riposo') {
-          title = 'Giorno di riposo';
-          body = 'Recupera le energie per la prossima sessione';
+          title = '😴 Giorno di riposo';
+          body = 'Recupera le energie per la prossima sessione. Il tuo corpo sta costruendo!';
+        } else if (sessionType === 'ripetute' || sessionType === 'interval') {
+          title = `🔥 Oggi: ${sessionTitle}`;
+          body = `${[distance, pace].filter(Boolean).join(' ')} — Riscaldati bene prima delle ripetute!`;
+        } else if (sessionType === 'lungo' || sessionType === 'long') {
+          title = `🏃 Oggi: ${sessionTitle}`;
+          body = `${[distance, pace].filter(Boolean).join(' ')} — Corsa lunga, parti piano e gestisci le energie`;
+        } else if (sessionType === 'soglia' || sessionType === 'tempo') {
+          title = `⚡ Oggi: ${sessionTitle}`;
+          body = `${[distance, pace].filter(Boolean).join(' ')} — Mantieni il ritmo in soglia, non strafare`;
+        } else if (sessionType === 'progressivo') {
+          title = `📈 Oggi: ${sessionTitle}`;
+          body = `${[distance, pace].filter(Boolean).join(' ')} — Parti lento e chiudi forte!`;
         } else {
-          title = `Oggi: ${sessionTitle}`;
+          title = `🏃 Oggi: ${sessionTitle}`;
           body = [distance, pace].filter(Boolean).join(' ') || 'Apri l\'app per i dettagli';
         }
       }
