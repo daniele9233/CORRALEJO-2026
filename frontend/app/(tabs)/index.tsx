@@ -108,13 +108,6 @@ export default function Dashboard() {
           </View>
         </View>
 
-        {/* ====== MOTIVATIONAL QUOTE ====== */}
-        <View style={styles.quoteCard}>
-          <Text style={styles.quoteText}>
-            "Tutti vogliono andare in paradiso ma nessuno è disposto a morire per arrivarci"
-          </Text>
-        </View>
-
         {/* ====== HERO: TODAY'S WORKOUT ====== */}
         <View style={styles.todayHeaderRow}>
           <Ionicons name="today" size={16} color={COLORS.lime} />
