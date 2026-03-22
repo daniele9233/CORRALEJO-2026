@@ -329,6 +329,27 @@ export default function ProfiloScreen() {
               <Ionicons name="chevron-forward" size={20} color="#f97316" />
             </TouchableOpacity>
 
+            {/* DNA della Corsa – Heatmap */}
+            <TouchableOpacity
+              onPress={() => router.push('/heatmap')}
+              style={{
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                backgroundColor: '#3b82f610', borderRadius: BORDER_RADIUS.md,
+                padding: SPACING.lg, marginBottom: SPACING.lg,
+                borderWidth: 1, borderColor: '#3b82f640',
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.md }}>
+                <Text style={{ fontSize: 28 }}>🧬</Text>
+                <View>
+                  <Text style={{ fontSize: FONT_SIZES.body, fontWeight: '900', color: COLORS.text }}>DNA della Corsa</Text>
+                  <Text style={{ fontSize: FONT_SIZES.xs, color: COLORS.textMuted }}>La tua impronta genetica di runner</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#3b82f6" />
+            </TouchableOpacity>
+
             <Text style={styles.introText}>Sistema medaglie a 6 livelli: Warm-up, Bronzo, Argento, Oro, Platino, Elite</Text>
             {Object.entries(medals).map(([dist, medal]: [string, any]) => {
               const status = medal.status || 'locked';

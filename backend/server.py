@@ -6878,6 +6878,115 @@ async def get_recovery_score():
     }
 
 
+# ====== HEATMAP – DNA DELLA CORSA ======
+@api_router.get("/heatmap")
+async def get_heatmap():
+    """Return daily running data for the heatmap (DNA della Corsa)."""
+    profile = await db.profile.find_one({}, {"_id": 0})
+    max_hr = (profile or {}).get("max_hr", 190)
+    rest_hr = (profile or {}).get("rest_hr", 50)
+
+    start_date = date(2025, 1, 1)
+    today = date.today()
+
+    # Fetch all runs from 2025-01-01
+    runs_cursor = db.runs.find(
+        {"date": {"$gte": start_date.isoformat()}},
+        {"_id": 0, "date": 1, "distance_km": 1, "duration_minutes": 1,
+         "avg_hr": 1, "run_type": 1, "avg_pace": 1}
+    )
+    runs_list = await runs_cursor.to_list(5000)
+
+    # Index runs by date
+    runs_by_date: dict[str, list] = {}
+    for r in runs_list:
+        d = r.get("date", "")[:10]
+        runs_by_date.setdefault(d, []).append(r)
+
+    # Build daily array
+    days = []
+    current = start_date
+    current_streak = 0
+    longest_streak = 0
+    temp_streak = 0
+    total_km = 0.0
+    total_runs = 0
+    monthly_data: dict[str, dict] = {}  # "YYYY-MM" -> {km, runs}
+
+    while current <= today:
+        ds = current.isoformat()
+        month_key = ds[:7]
+        if month_key not in monthly_data:
+            monthly_data[month_key] = {"km": 0.0, "runs": 0}
+
+        day_runs = runs_by_date.get(ds, [])
+        has_run = len(day_runs) > 0
+
+        km = sum(r.get("distance_km", 0) or 0 for r in day_runs)
+        dur = sum(r.get("duration_minutes", 0) or 0 for r in day_runs)
+        avg_hr_vals = [r.get("avg_hr", 0) or 0 for r in day_runs if r.get("avg_hr")]
+        avg_hr = round(sum(avg_hr_vals) / len(avg_hr_vals)) if avg_hr_vals else 0
+        run_type = day_runs[0].get("run_type", "") if day_runs else ""
+        avg_pace = day_runs[0].get("avg_pace", "") if day_runs else ""
+
+        # TRIMP: duration * HR_reserve * 0.64 * e^(1.92 * HR_reserve)
+        trimp = 0.0
+        if has_run and avg_hr > 0 and dur > 0:
+            hr_reserve = (avg_hr - rest_hr) / (max_hr - rest_hr) if max_hr > rest_hr else 0
+            hr_reserve = max(0, min(1, hr_reserve))
+            trimp = round(dur * hr_reserve * 0.64 * math.exp(1.92 * hr_reserve), 1)
+
+        days.append({
+            "date": ds,
+            "km": round(km, 2),
+            "trimp": trimp,
+            "avg_hr": avg_hr,
+            "avg_pace": avg_pace,
+            "run_type": run_type,
+            "has_run": has_run,
+        })
+
+        # Streaks
+        if has_run:
+            temp_streak += 1
+            longest_streak = max(longest_streak, temp_streak)
+        else:
+            temp_streak = 0
+
+        total_km += km
+        total_runs += len(day_runs)
+        monthly_data[month_key]["km"] += km
+        monthly_data[month_key]["runs"] += len(day_runs)
+
+        current += timedelta(days=1)
+
+    # Current streak (count backwards from today)
+    current_streak = 0
+    for day in reversed(days):
+        if day["has_run"]:
+            current_streak += 1
+        else:
+            break
+
+    # Monthly totals
+    monthly_totals = []
+    for mk in sorted(monthly_data.keys()):
+        monthly_totals.append({
+            "month": mk,
+            "km": round(monthly_data[mk]["km"], 1),
+            "runs": monthly_data[mk]["runs"],
+        })
+
+    return {
+        "days": days,
+        "current_streak": current_streak,
+        "longest_streak": longest_streak,
+        "total_km_year": round(total_km, 1),
+        "total_runs_year": total_runs,
+        "monthly_totals": monthly_totals,
+    }
+
+
 # Include router + middleware
 app.include_router(api_router)
 
