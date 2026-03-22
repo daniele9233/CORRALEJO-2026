@@ -64,4 +64,7 @@ export const api = {
   getBestEfforts: () => apiFetch('/best-efforts'),
   getBadges: () => apiFetch('/badges'),
   getSupercompensation: () => apiFetch('/supercompensation'),
+  getRecoveryScore: () => apiFetch('/recovery-score'),
+  saveRecoveryCheckin: (data: { energy: number; sleep_quality: number; muscle_soreness: number; mood: number; hrv?: number }) =>
+    apiFetch('/recovery-checkin', { method: 'POST', body: JSON.stringify(data) }),
 };

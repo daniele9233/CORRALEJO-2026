@@ -6623,6 +6623,261 @@ async def get_injury_risk():
     }
 
 
+# ──────────────────────────────────────────────
+# RECOVERY SCORE (Option B — subjective + objective)
+# ──────────────────────────────────────────────
+
+class RecoveryCheckin(BaseModel):
+    energy: int  # 1-5
+    sleep_quality: int  # 1-5
+    muscle_soreness: int  # 1-5 (1=forte dolore, 5=nessun dolore)
+    mood: int  # 1-5
+    hrv: Optional[float] = None  # optional HRV value
+
+@api_router.post("/recovery-checkin")
+async def save_recovery_checkin(checkin: RecoveryCheckin):
+    """Save daily morning check-in for recovery score"""
+    today_str = date.today().isoformat()
+
+    doc = {
+        "id": make_id(),
+        "date": today_str,
+        "energy": max(1, min(5, checkin.energy)),
+        "sleep_quality": max(1, min(5, checkin.sleep_quality)),
+        "muscle_soreness": max(1, min(5, checkin.muscle_soreness)),
+        "mood": max(1, min(5, checkin.mood)),
+        "hrv": checkin.hrv,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Upsert: one check-in per day
+    await db.recovery_checkins.update_one(
+        {"date": today_str},
+        {"$set": doc},
+        upsert=True
+    )
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/recovery-score")
+async def get_recovery_score():
+    """Calculate Recovery Score combining objective training data + subjective check-in"""
+    today = date.today()
+    today_str = today.isoformat()
+    profile = await db.profile.find_one({}, {"_id": 0}) or {}
+    max_hr = profile.get("max_hr", 180)
+
+    # ── Get today's check-in (or most recent) ──
+    checkin = await db.recovery_checkins.find_one(
+        {"date": today_str}, {"_id": 0}
+    )
+    if not checkin:
+        # Try yesterday
+        yesterday = (today - timedelta(days=1)).isoformat()
+        checkin = await db.recovery_checkins.find_one(
+            {"date": yesterday}, {"_id": 0}
+        )
+
+    # ── Get check-in history (last 14 days) ──
+    two_weeks_ago = (today - timedelta(days=14)).isoformat()
+    checkin_history = await db.recovery_checkins.find(
+        {"date": {"$gte": two_weeks_ago}},
+        {"_id": 0}
+    ).sort("date", -1).to_list(14)
+
+    # ── Objective factors (from training data) ──
+    runs = await db.runs.find(
+        {"date": {"$gte": (today - timedelta(days=30)).isoformat()}},
+        {"_id": 0}
+    ).sort("date", -1).to_list(500)
+    valid_runs = [r for r in runs if r.get("distance_km", 0) > 0.5 and r.get("date")]
+
+    # Factor 1: Hours since last run (more rest = more recovery)
+    hours_since_last = 72  # default
+    if valid_runs:
+        try:
+            last_run_date = datetime.fromisoformat(valid_runs[0]["date"])
+            now = datetime.now()
+            if last_run_date.tzinfo is None:
+                hours_since_last = (now - last_run_date).total_seconds() / 3600
+            else:
+                hours_since_last = (now - last_run_date.replace(tzinfo=None)).total_seconds() / 3600
+        except:
+            pass
+
+    rest_score = 0
+    if hours_since_last >= 48:
+        rest_score = 95  # fully rested
+    elif hours_since_last >= 36:
+        rest_score = 80
+    elif hours_since_last >= 24:
+        rest_score = 65
+    elif hours_since_last >= 18:
+        rest_score = 45
+    elif hours_since_last >= 12:
+        rest_score = 30
+    else:
+        rest_score = 15
+
+    # Factor 2: Load last 3 days vs 21-day average
+    load_3d = 0
+    load_21d_avg = 0
+    for r in valid_runs:
+        r_date = r.get("date", "")
+        km = r.get("distance_km", 0)
+        hr_factor = (r.get("avg_hr", 140) / max_hr) if r.get("avg_hr") else 0.78
+        load = km * hr_factor
+        if r_date >= (today - timedelta(days=3)).isoformat():
+            load_3d += load
+        if r_date >= (today - timedelta(days=21)).isoformat():
+            load_21d_avg += load
+    load_21d_avg = load_21d_avg / 3 if load_21d_avg > 0 else load_3d  # avg per 3-day block
+
+    load_ratio = load_3d / max(load_21d_avg, 0.1)
+    load_score = 0
+    if load_ratio <= 0.5:
+        load_score = 90  # very light recent load
+    elif load_ratio <= 0.8:
+        load_score = 75
+    elif load_ratio <= 1.0:
+        load_score = 55
+    elif load_ratio <= 1.3:
+        load_score = 35
+    else:
+        load_score = 15
+
+    # Factor 3: TSB (Training Stress Balance) from Fitness & Freshness
+    tsb_score = 50  # neutral default
+    try:
+        ff_data = await get_fitness_freshness()
+        current_tsb = ff_data.get("current", {}).get("tsb", 0)
+        if current_tsb >= 15:
+            tsb_score = 95
+        elif current_tsb >= 5:
+            tsb_score = 80
+        elif current_tsb >= 0:
+            tsb_score = 60
+        elif current_tsb >= -10:
+            tsb_score = 40
+        elif current_tsb >= -20:
+            tsb_score = 25
+        else:
+            tsb_score = 10
+    except:
+        pass
+
+    # Factor 4: Intensity of last workout
+    last_intensity_score = 60  # neutral
+    if valid_runs and valid_runs[0].get("avg_hr"):
+        last_hr_pct = valid_runs[0]["avg_hr"] / max_hr * 100
+        if last_hr_pct >= 88:
+            last_intensity_score = 20  # very hard → needs recovery
+        elif last_hr_pct >= 82:
+            last_intensity_score = 35
+        elif last_hr_pct >= 75:
+            last_intensity_score = 55
+        elif last_hr_pct >= 68:
+            last_intensity_score = 75
+        else:
+            last_intensity_score = 90  # easy run → good recovery
+
+    # ── Subjective factors (from check-in) ──
+    subjective_score = None
+    has_checkin = checkin is not None
+
+    if has_checkin:
+        energy = checkin.get("energy", 3)
+        sleep = checkin.get("sleep_quality", 3)
+        soreness = checkin.get("muscle_soreness", 3)
+        mood = checkin.get("mood", 3)
+        # Each on 1-5 scale → normalize to 0-100
+        subjective_score = round(((energy + sleep + soreness + mood) / 20) * 100)
+
+    # ── Combined Score ──
+    if has_checkin:
+        # With check-in: 40% objective + 60% subjective
+        objective_score = round(
+            rest_score * 0.30 +
+            load_score * 0.25 +
+            tsb_score * 0.25 +
+            last_intensity_score * 0.20
+        )
+        overall = round(objective_score * 0.40 + subjective_score * 0.60)
+    else:
+        # Without check-in: 100% objective
+        overall = round(
+            rest_score * 0.30 +
+            load_score * 0.25 +
+            tsb_score * 0.25 +
+            last_intensity_score * 0.20
+        )
+
+    # ── Status label & recommendation ──
+    if overall >= 80:
+        status = "Pronto"
+        status_color = "green"
+        recommendation = "Corpo pronto. Oggi puoi spingere!"
+        emoji = "💪"
+    elif overall >= 60:
+        status = "Buono"
+        status_color = "lime"
+        recommendation = "Recupero buono. Puoi allenarti normalmente."
+        emoji = "👍"
+    elif overall >= 40:
+        status = "Parziale"
+        status_color = "yellow"
+        recommendation = "Recupero parziale. Meglio una corsa facile in Z2."
+        emoji = "⚡"
+    elif overall >= 25:
+        status = "Stanco"
+        status_color = "orange"
+        recommendation = "Corpo affaticato. Corsa leggera o riposo attivo."
+        emoji = "😴"
+    else:
+        status = "Riposa"
+        status_color = "red"
+        recommendation = "Riposa. Il tuo corpo sta ancora assorbendo il carico."
+        emoji = "🛑"
+
+    # ── Suggested workout type ──
+    if overall >= 75:
+        suggested_workout = "Intervalli / Soglia / Ripetute"
+    elif overall >= 55:
+        suggested_workout = "Corsa media / Fartlek leggero"
+    elif overall >= 35:
+        suggested_workout = "Corsa lenta Z2 / Recupero attivo"
+    else:
+        suggested_workout = "Riposo completo / Stretching"
+
+    return {
+        "overall_score": overall,
+        "status": status,
+        "status_color": status_color,
+        "emoji": emoji,
+        "recommendation": recommendation,
+        "suggested_workout": suggested_workout,
+        "has_checkin": has_checkin,
+        "checkin_date": checkin.get("date") if checkin else None,
+        "factors": {
+            "rest": {"score": rest_score, "hours_since_last": round(hours_since_last, 1),
+                     "label": "Ore dall'ultimo allenamento"},
+            "load": {"score": load_score, "ratio": round(load_ratio, 2),
+                     "label": "Carico 3gg vs media 21gg"},
+            "tsb": {"score": tsb_score, "label": "Forma fisica (TSB)"},
+            "intensity": {"score": last_intensity_score,
+                          "label": "Intensità ultimo allenamento"},
+        },
+        "subjective": {
+            "score": subjective_score,
+            "energy": checkin.get("energy") if checkin else None,
+            "sleep_quality": checkin.get("sleep_quality") if checkin else None,
+            "muscle_soreness": checkin.get("muscle_soreness") if checkin else None,
+            "mood": checkin.get("mood") if checkin else None,
+        } if has_checkin else None,
+        "checkin_history": checkin_history,
+    }
+
+
 # Include router + middleware
 app.include_router(api_router)
 
