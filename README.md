@@ -101,6 +101,7 @@ CORRALEJO-2026/
 │   │   ├── run-detail.tsx     # Dettaglio corsa + analisi AI
 │   │   ├── workout-detail.tsx # Dettaglio sessione pianificata
 │   │   ├── periodizzazione.tsx# Grafico periodizzazione
+│   │   ├── metodologia.tsx   # Basi scientifiche del piano (Daniels, Pfitzinger, Seiler, ecc.)
 │   │   ├── progressi.tsx      # Storico VO2max/soglia/previsioni
 │   │   ├── calcolatore.tsx    # Calcolatore passi e previsioni
 │   │   ├── injury-risk.tsx    # Recovery & Risk (Recovery Score + Injury Risk)
@@ -409,6 +410,12 @@ Gestione OAuth Strava:
 - Auto-adattamento basato su 5 modelli scientifici peer-reviewed
 - Volume caps fase-specifici (Daniels + ACSM 10% rule)
 - Tapering progressivo (Mujika & Padilla 2003)
+- **Calendario navigabile**: frecce avanti/indietro per visualizzare tutti i mesi del piano, con conteggio sessioni e fase corrente
+- **Pagina Metodologia** (`/metodologia`): basi scientifiche complete del piano:
+  - Modello di periodizzazione: 6 fasi con obiettivi fisiologici per fase
+  - 7 riferimenti scientifici: Daniels (VDOT), Pfitzinger (progressive long runs), Seiler (polarized), Foster (monotony), Mujika (taper), ACSM (10% rule), Banister (impulse-response)
+  - Analisi fattibilità obiettivo: VDOT attuale vs target, gap da colmare, previsione scientifica
+  - Sistema di adattamento automatico: come il piano si ricalibra dopo ogni sync/test
 
 ### 2. VDOT Dinamico (Jack Daniels)
 - Calcolo automatico del VDOT solo da **sforzi validati** (≥4km, FC ≥85% HRmax)

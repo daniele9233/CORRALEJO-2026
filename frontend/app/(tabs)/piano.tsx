@@ -33,6 +33,8 @@ export default function PianoScreen() {
   const [adaptationStatus, setAdaptationStatus] = useState<any>(null);
   const [adapting, setAdapting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
+  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
 
   useFocusEffect(
     useCallback(() => {
@@ -139,9 +141,8 @@ export default function PianoScreen() {
 
   /* ── Calendar data ── */
   const getCalendarData = () => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
+    const year = calendarYear;
+    const month = calendarMonth;
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
     const daysInMonth = lastDay.getDate();
@@ -171,7 +172,37 @@ export default function PianoScreen() {
         isToday: dateStr === today,
       });
     }
-    return { days, monthName: MONTHS_IT[month], year };
+    // Count sessions this month
+    const sessionsThisMonth = days.filter(d => d.session).length;
+    const completedThisMonth = days.filter(d => d.session?.completed).length;
+    // Find phase for this month
+    const midMonth = `${year}-${String(month + 1).padStart(2, '0')}-15`;
+    const monthPhase = weeks.find(w => w.week_start <= midMonth && w.week_end >= midMonth)?.phase || '';
+    return { days, monthName: MONTHS_IT[month], year, sessionsThisMonth, completedThisMonth, monthPhase };
+  };
+
+  const goToPrevMonth = () => {
+    if (calendarMonth === 0) {
+      setCalendarMonth(11);
+      setCalendarYear(calendarYear - 1);
+    } else {
+      setCalendarMonth(calendarMonth - 1);
+    }
+  };
+
+  const goToNextMonth = () => {
+    if (calendarMonth === 11) {
+      setCalendarMonth(0);
+      setCalendarYear(calendarYear + 1);
+    } else {
+      setCalendarMonth(calendarMonth + 1);
+    }
+  };
+
+  const goToToday = () => {
+    const now = new Date();
+    setCalendarMonth(now.getMonth());
+    setCalendarYear(now.getFullYear());
   };
 
   const calendarData = getCalendarData();
@@ -186,6 +217,12 @@ export default function PianoScreen() {
             <Text style={styles.pageSubtitle}>ALLENAMENTO</Text>
           </View>
           <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+            <TouchableOpacity
+              style={styles.viewToggle}
+              onPress={() => router.push('/metodologia')}
+            >
+              <Ionicons name="school" size={24} color={COLORS.lime} />
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.viewToggle}
               onPress={() => router.push('/periodizzazione')}
@@ -251,9 +288,33 @@ export default function PianoScreen() {
           }
         >
           <View style={styles.calendarContainer}>
-            <Text style={styles.calendarMonth}>
-              {calendarData.monthName} {calendarData.year}
-            </Text>
+            {/* Month navigation */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md }}>
+              <TouchableOpacity onPress={goToPrevMonth} style={{ padding: 8 }}>
+                <Ionicons name="chevron-back" size={24} color={COLORS.lime} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={goToToday}>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={styles.calendarMonth}>
+                    {calendarData.monthName} {calendarData.year}
+                  </Text>
+                  {calendarData.monthPhase ? (
+                    <Text style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 2 }}>
+                      {calendarData.monthPhase}
+                    </Text>
+                  ) : null}
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={goToNextMonth} style={{ padding: 8 }}>
+                <Ionicons name="chevron-forward" size={24} color={COLORS.lime} />
+              </TouchableOpacity>
+            </View>
+            {/* Sessions counter */}
+            {calendarData.sessionsThisMonth > 0 && (
+              <Text style={{ color: COLORS.textMuted, fontSize: 11, textAlign: 'center', marginBottom: SPACING.sm }}>
+                {calendarData.completedThisMonth}/{calendarData.sessionsThisMonth} sessioni completate
+              </Text>
+            )}
             <View style={styles.calendarHeader}>
               {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map(d => (
                 <Text key={d} style={styles.calendarDayHeader}>{d}</Text>
@@ -804,7 +865,6 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontWeight: '800',
     textAlign: 'center',
-    marginBottom: SPACING.md,
   },
   calendarHeader: { flexDirection: 'row', marginBottom: SPACING.sm },
   calendarDayHeader: {
