@@ -912,7 +912,7 @@ npx expo run:android
 - [ ] **Shoe tracker** — km per scarpa da Strava, alert a 600km per cambio
 - [ ] **Elevation gain tracking** — Dislivello settimanale (utile per Fuerteventura, terreno ondulato)
 - [ ] **Confronto diretto** — Sovrapporre due corse sulla stessa distanza per vedere il progresso
-- [ ] **Heatmap settimane** — Calendario stile GitHub con colori per km/giorno
+- [x] ~~**Heatmap settimane**~~ — Implementato come "DNA della Corsa" (Heatmap Genetico)
 - [ ] **Race Pace Simulator** — Previsione HR a un dato passo gara basata sui dati reali
 - [ ] **Negative Split Planner** — Piano gara km per km con strategia pacing
 - [ ] **Garmin Connect** — HR a riposo, HRV, Body Battery, qualità sonno
@@ -965,6 +965,14 @@ npx expo run:android
 - [x] **Badge Passerotto (leggendario)** — Card hero separata con bordo dorato, checklist 2 condizioni (5K < 20min, 10K < 4:15/km), barra progresso dorata
 - [x] **Frase motivazionale dashboard** — "Tutti vogliono andare in paradiso ma nessuno è disposto a morire per arrivarci"
 - [x] **EAS account migrato** — Da gamess9233 a massiminovanni (limite build raggiunto). ProjectId: `1a7ea756-e936-4b37-b3d9-fd1e35b66331`
+- [x] **Recovery Score (Opzione B)** — Score 0-100 con 4 fattori oggettivi + check-in mattutino soggettivo (energia, sonno, dolori, umore). Cerchio grande con emoji e suggerimento allenamento. Storico 7 giorni con barre colorate. Integrato nella pagina Injury Risk come tab
+- [x] **DNA della Corsa (Heatmap Genetico)** — Griglia 52×7 con TRIMP per cella, colore 5 livelli (blu→rosso), bordo HR zona, dimensione variabile con km. Touch per dettaglio, long-press per settimana. Mutazione positiva (mesi +20%), streak glow. 4 stat box + barre mensili. Endpoint `GET /api/heatmap`
+- [x] **Weekly Report AI** — Report settimanale con analisi Claude 4 Haiku. 2 anelli progresso, 4 stat card, VDOT trend, trend volume 5 settimane, dettaglio corse, preview settimana successiva. Storico 6 settimane. Endpoint `GET /api/weekly-report`
+- [x] **Notifiche Push Intelligenti** — Reminder sessione del giorno, alert Golden Day supercompensazione, alert badge a rischio (streak), notifica nuovo badge sbloccato. Expo Notifications con token salvato nel profilo
+- [x] **Grafico HR Stream (stile Strava)** — Area rossa con andamento FC nel tempo, linea media bianca, asse X/Y. Dati da Strava Streams API (heartrate+time), downsampled a 200 punti. Mostra drift cardiaco
+- [x] **AI auto-rigenerazione** — GET /runs/{id} rigenera automaticamente analisi vecchie (gemini/fallback) con Claude quando la key è disponibile
+- [x] **Custom Launcher Icon** — Icona runner personalizzata per adaptive icon Android 8+ (foreground/background/legacy/round) in tutte le densità (mdpi→xxxhdpi). Generata da runner.png con safe zone 25%
+- [x] **Rimossa frase dashboard** — Tolta "Tutti vogliono andare in paradiso..."
 
 ---
 
