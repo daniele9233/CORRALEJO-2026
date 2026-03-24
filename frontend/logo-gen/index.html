@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; background: #222; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; min-height: 100vh; gap: 30px; padding: 20px; }
+  .box { text-align: center; }
+  canvas { border: 1px solid #444; }
+  .label { color: #999; font-family: sans-serif; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="box">
+  <canvas id="icon" width="1024" height="1024" style="width:380px;height:380px"></canvas>
+  <div class="label">icon.png (1024x1024)</div>
+</div>
+
+<div class="box">
+  <canvas id="adaptive" width="1024" height="1024" style="width:380px;height:380px"></canvas>
+  <div class="label">adaptive-icon.png (foreground)</div>
+</div>
+
+<script>
+// ====== DRAW RUNNER LOGO ======
+function drawRunnerLogo(ctx, W, darkBg) {
+  const CX = W/2, CY = W/2;
+
+  if (darkBg) {
+    // Dark background for icon.png
+    ctx.fillStyle = '#09090b';
+    ctx.fillRect(0, 0, W, W);
+
+    // Subtle radial glow
+    const glow = ctx.createRadialGradient(CX, CY - 40, 0, CX, CY, 420);
+    glow.addColorStop(0, 'rgba(190, 242, 100, 0.06)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, W);
+  }
+
+  ctx.save();
+  ctx.translate(CX, CY - 40);
+  ctx.scale(3.2, 3.2);
+
+  // ===== COLORED FLOWING RIBBONS (behind runner) =====
+
+  // GREEN ribbon (top, flows from body to left-back)
+  ctx.beginPath();
+  ctx.moveTo(15, -30);
+  ctx.bezierCurveTo(-5, -35, -40, -28, -70, -20);
+  ctx.bezierCurveTo(-90, -15, -100, -8, -95, -5);
+  ctx.bezierCurveTo(-88, -2, -70, -12, -45, -18);
+  ctx.bezierCurveTo(-20, -24, 0, -25, 15, -24);
+  ctx.closePath();
+  const greenGrad = ctx.createLinearGradient(-100, 0, 20, 0);
+  greenGrad.addColorStop(0, 'rgba(76, 175, 80, 0.3)');
+  greenGrad.addColorStop(0.4, '#4CAF50');
+  greenGrad.addColorStop(1, '#66BB6A');
+  ctx.fillStyle = greenGrad;
+  ctx.fill();
+
+  // RED ribbon (middle, larger sweep)
+  ctx.beginPath();
+  ctx.moveTo(5, 0);
+  ctx.bezierCurveTo(-20, 5, -55, 15, -85, 25);
+  ctx.bezierCurveTo(-105, 32, -115, 40, -108, 45);
+  ctx.bezierCurveTo(-100, 50, -80, 38, -55, 28);
+  ctx.bezierCurveTo(-25, 16, 0, 10, 10, 8);
+  ctx.closePath();
+  const redGrad = ctx.createLinearGradient(-115, 0, 10, 0);
+  redGrad.addColorStop(0, 'rgba(211, 47, 47, 0.2)');
+  redGrad.addColorStop(0.3, '#D32F2F');
+  redGrad.addColorStop(1, '#F44336');
+  ctx.fillStyle = redGrad;
+  ctx.fill();
+
+  // YELLOW/GOLD ribbon (bottom, flowing behind legs)
+  ctx.beginPath();
+  ctx.moveTo(20, 30);
+  ctx.bezierCurveTo(0, 38, -30, 50, -60, 58);
+  ctx.bezierCurveTo(-85, 64, -105, 68, -110, 72);
+  ctx.bezierCurveTo(-118, 78, -112, 82, -100, 78);
+  ctx.bezierCurveTo(-82, 72, -50, 60, -20, 48);
+  ctx.bezierCurveTo(5, 38, 18, 35, 22, 35);
+  ctx.closePath();
+  const yellowGrad = ctx.createLinearGradient(-118, 0, 25, 0);
+  yellowGrad.addColorStop(0, 'rgba(255, 193, 7, 0.15)');
+  yellowGrad.addColorStop(0.3, '#FFC107');
+  yellowGrad.addColorStop(1, '#FFD54F');
+  ctx.fillStyle = yellowGrad;
+  ctx.fill();
+
+  // ===== RUNNER BODY (blue, athletic silhouette) =====
+  const blue = '#1976D2';
+  const blueDark = '#1565C0';
+  const blueLight = '#42A5F5';
+
+  // HEAD
+  ctx.beginPath();
+  ctx.arc(28, -52, 13, 0, Math.PI * 2);
+  ctx.fillStyle = blue;
+  ctx.fill();
+
+  // TORSO (leaning forward dynamically)
+  ctx.beginPath();
+  ctx.moveTo(24, -40);
+  ctx.bezierCurveTo(18, -28, 10, -10, 5, 5);
+  ctx.bezierCurveTo(2, 14, 4, 22, 8, 25);
+  ctx.lineTo(18, 22);
+  ctx.bezierCurveTo(24, 18, 28, 5, 30, -10);
+  ctx.bezierCurveTo(32, -22, 30, -35, 28, -40);
+  ctx.closePath();
+  ctx.fillStyle = blue;
+  ctx.fill();
+
+  // FRONT ARM (reaching forward powerfully)
+  ctx.beginPath();
+  ctx.moveTo(30, -35);
+  ctx.bezierCurveTo(38, -42, 52, -52, 60, -52);
+  ctx.bezierCurveTo(64, -52, 64, -48, 58, -44);
+  ctx.bezierCurveTo(48, -38, 36, -32, 30, -30);
+  ctx.closePath();
+  ctx.fillStyle = blueLight;
+  ctx.fill();
+
+  // BACK ARM (swinging back)
+  ctx.beginPath();
+  ctx.moveTo(18, -32);
+  ctx.bezierCurveTo(10, -26, -5, -15, -15, -10);
+  ctx.bezierCurveTo(-20, -8, -20, -12, -16, -16);
+  ctx.bezierCurveTo(-8, -22, 5, -30, 14, -34);
+  ctx.closePath();
+  ctx.fillStyle = blueDark;
+  ctx.fill();
+
+  // FRONT LEG (striding forward)
+  ctx.beginPath();
+  ctx.moveTo(12, 22);
+  ctx.bezierCurveTo(22, 32, 38, 52, 48, 68);
+  ctx.bezierCurveTo(50, 72, 50, 76, 46, 78);
+  ctx.bezierCurveTo(42, 78, 38, 72, 34, 62);
+  ctx.bezierCurveTo(26, 48, 16, 34, 8, 24);
+  ctx.closePath();
+  ctx.fillStyle = blue;
+  ctx.fill();
+
+  // Front foot
+  ctx.beginPath();
+  ctx.moveTo(46, 76);
+  ctx.bezierCurveTo(50, 78, 56, 78, 58, 76);
+  ctx.bezierCurveTo(59, 74, 55, 73, 48, 74);
+  ctx.closePath();
+  ctx.fillStyle = blueLight;
+  ctx.fill();
+
+  // BACK LEG (pushing off, kicked behind)
+  ctx.beginPath();
+  ctx.moveTo(5, 22);
+  ctx.bezierCurveTo(-5, 30, -22, 42, -35, 45);
+  ctx.bezierCurveTo(-42, 46, -48, 40, -50, 32);
+  ctx.bezierCurveTo(-52, 24, -48, 20, -42, 24);
+  ctx.bezierCurveTo(-32, 30, -18, 34, -5, 30);
+  ctx.bezierCurveTo(0, 28, 3, 25, 5, 22);
+  ctx.closePath();
+  ctx.fillStyle = blueDark;
+  ctx.fill();
+
+  // Back foot
+  ctx.beginPath();
+  ctx.moveTo(-50, 32);
+  ctx.bezierCurveTo(-54, 28, -56, 22, -52, 20);
+  ctx.bezierCurveTo(-48, 18, -47, 24, -48, 30);
+  ctx.closePath();
+  ctx.fillStyle = blueDark;
+  ctx.fill();
+
+  ctx.restore();
+
+  // ===== TEXT =====
+  if (darkBg) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // CORRALEJO
+    ctx.font = 'bold 78px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('CORRALEJO', CX, CY + 310);
+
+    // 2026
+    ctx.font = '600 42px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = '#bef264';
+    ctx.fillText('2 0 2 6', CX, CY + 368);
+
+    // Separator line
+    ctx.beginPath();
+    ctx.moveTo(CX-100, CY + 398);
+    ctx.lineTo(CX+100, CY + 398);
+    const sep = ctx.createLinearGradient(CX-100, 0, CX+100, 0);
+    sep.addColorStop(0, 'rgba(190, 242, 100, 0)');
+    sep.addColorStop(0.5, 'rgba(190, 242, 100, 0.3)');
+    sep.addColorStop(1, 'rgba(190, 242, 100, 0)');
+    ctx.strokeStyle = sep;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // HALF MARATHON
+    ctx.font = '300 24px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText('H A L F   M A R A T H O N', CX, CY + 428);
+  }
+}
+
+// ====== RENDER ICON (dark background, with text) ======
+const iconCanvas = document.getElementById('icon');
+const iconCtx = iconCanvas.getContext('2d');
+drawRunnerLogo(iconCtx, 1024, true);
+
+// ====== RENDER ADAPTIVE FOREGROUND (transparent bg, no text) ======
+const adaptiveCanvas = document.getElementById('adaptive');
+const adaptiveCtx = adaptiveCanvas.getContext('2d');
+// Show checkerboard for transparent preview
+for (let y = 0; y < 1024; y += 32) {
+  for (let x = 0; x < 1024; x += 32) {
+    adaptiveCtx.fillStyle = ((x + y) / 32) % 2 === 0 ? '#2a2a2a' : '#333';
+    adaptiveCtx.fillRect(x, y, 32, 32);
+  }
+}
+drawRunnerLogo(adaptiveCtx, 1024, false);
+</script>
+</body>
+</html>

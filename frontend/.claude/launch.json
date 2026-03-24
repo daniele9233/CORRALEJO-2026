@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "logo-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["logo-gen/server.js"],
+      "port": 3456
+    }
+  ]
+}

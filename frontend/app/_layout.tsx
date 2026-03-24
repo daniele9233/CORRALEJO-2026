@@ -13,6 +13,8 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
 
@@ -44,7 +46,7 @@ async function registerForPushNotifications() {
   }
 
   const pushToken = await Notifications.getExpoPushTokenAsync({
-    projectId: '1a7ea756-e936-4b37-b3d9-fd1e35b66331',
+    projectId: 'e7a2235c-4295-4002-af00-2edc6a8757ba',
   });
   try {
     await api.registerPushToken(pushToken.data);
@@ -191,6 +193,9 @@ export default function RootLayout() {
         <Stack.Screen name="injury-risk" />
         <Stack.Screen name="heatmap" />
         <Stack.Screen name="weekly-report" />
+        <Stack.Screen name="badges" />
+        <Stack.Screen name="metodologia" />
+        <Stack.Screen name="supercompensazione" />
         <Stack.Screen
           name="add-test"
           options={{
